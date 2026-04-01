@@ -18,7 +18,6 @@ const userSchema = new mongoose.Schema(
       trim: true,
       unique: true,
       match: /^[^\s@]+@(satkartar|skinrange)\.(com|in)$/,
-      index:true
     },
     passwordHash: {
       type: String,
@@ -39,7 +38,7 @@ const userSchema = new mongoose.Schema(
     teamId: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
+        ref: "Team",
       },
     ],
     refreshToken: {

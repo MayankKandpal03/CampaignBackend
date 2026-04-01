@@ -13,30 +13,50 @@ const campaignSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    requestedDate: {
+      type: String,
+      default: () => new Date().toISOString().slice(0, 10),
+    },
     requestedTime: {
-      type: Date,
-      default: Date.now,
+      type: String,
+      default: () => new Date().toISOString().slice(11, 19),
     },
     // PPC
     status: {
       type: String,
-      enum: ["transfer, update, cancel"], // cancel permanent
+      enum: ["transfer", "cancel", "done", "not done"], // cancel permanent
       default: "transfer",
     },
     // Process manager
     action: {
       type: String,
-      enum: ["transfer, cancel, done"], // roll back
+      enum: ["approve", "cancel", "done"], // roll back
     },
-    scheduleAt: {
-      type: Date,
-      default: Date.now,
+    scheduleDate: {
+      type: String,
+      default: () => new Date().toISOString().slice(0, 10),
+    },
+    scheduleTime: {
+      type: String,
+      default: () => new Date().toISOString().slice(11, 19),
+    },
+    pmMessage: {
+      type: String,
+      trim: true,
     },
     // It
     acknowledgement: {
       type: String,
-      enum: ["Done", "Not_Done  "],
+      enum: ["done", "not done"],
+    },
+    itMessage: {
+      type: String,
+      trim: true,
     },
   },
   { timestamps: true },
 );
+
+const Campaign = mongoose.model("Campaign", campaignSchema);
+
+export default Campaign;

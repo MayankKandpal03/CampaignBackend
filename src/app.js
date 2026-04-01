@@ -13,6 +13,9 @@ app.use(express.json({ limit: "16kb" }));
 
 // Import routes
 import loginRouter from "./routes/loginRoute.js";
-
+import logoutRouter from "./routes/authRoute.js";
 // Use routes
-app.use("/api/v1", loginRouter)
+app.use("/api/v1", loginRouter);
+app.use("/api/v1", logoutRouter);
+
+export default app;

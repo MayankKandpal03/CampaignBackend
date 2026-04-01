@@ -1,5 +1,5 @@
 import User from "../models/userModel.js";
-import AppError from "../utils/errorHandler.js";
+import { AppError } from "../utils/errorHandler.js";
 
 const loginService = async (email, password) => {
   /**
@@ -13,15 +13,17 @@ const loginService = async (email, password) => {
 
   // Validate Input
   if (!email || !password)
-    throw AppError({ message: "Fill all fields", statusCode: 400 });
+    throw new AppError({ message: "Fill all fields", statusCode: 400 });
 
   // Verify user
   const user = await User.findOne({ email });
-  if (!user) throw AppError({ message: "Invalid Credentials", statusCode: 401 });
+  if (!user)
+    throw new AppError({ message: "Invalid Credentials", statusCode: 401 });
 
   // Verify password
   const isMatch = await user.isPasswordCorrect(password);
-  if (!isMatch) throw AppError({ message: "Invalid Credentials", statusCode: 401 });
+  if (!isMatch)
+    throw new AppError({ message: "Invalid Credentials", statusCode: 401 });
 
   // Generate Access and refresh token
   const accessToken = user.generateAccessToken();
@@ -29,7 +31,7 @@ const loginService = async (email, password) => {
 
   // Store refresh token in user model
   user.refreshToken = refreshToken;
-  await user.save({ validators: false });
+  await user.save({ validateBeforeSave: false });
 
   return {
     user: {

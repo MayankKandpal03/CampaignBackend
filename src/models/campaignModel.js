@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 
 const campaignSchema = new mongoose.Schema(
   {
-    username: {
+    createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,

@@ -17,22 +17,26 @@ const campaignSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
-    // PPC 
-    status:{
-        type: String,
-        enum:["transfer, update, cancel"], // cancel permanent 
-        default:"transfer"
+    // PPC
+    status: {
+      type: String,
+      enum: ["transfer, update, cancel"], // cancel permanent
+      default: "transfer",
     },
     // Process manager
-    action:{
-        type: String,
-        enum:["transfer, cancel, done"] // roll back
+    action: {
+      type: String,
+      enum: ["transfer, cancel, done"], // roll back
+    },
+    scheduleAt: {
+      type: Date,
+      default: Date.now,
     },
     // It
-    acknowledgement:{
-        type:String,
-        enum:["Done", "Not_Done  "]
-    }
+    acknowledgement: {
+      type: String,
+      enum: ["Done", "Not_Done  "],
+    },
   },
   { timestamps: true },
 );

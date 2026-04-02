@@ -1,7 +1,7 @@
-import logoutService from "../services/authService.js";
+import {logoutService, refreshTokenService} from "../services/authService.js";
 import { asyncWrap } from "../utils/errorHandler.js";
 
-const logoutController = asyncWrap(async (req, res) => {
+export const logoutController = asyncWrap(async (req, res) => {
   const user = req.user;
   console.log(user);
   await logoutService(user);
@@ -14,4 +14,13 @@ const logoutController = asyncWrap(async (req, res) => {
     .json({message:"User logged out sucessfully"})
 });
 
-export default logoutController
+export const refreshTokenController = asyncWrap(async (req, res) => {
+  const incomingRefreshToken = req.cookies?.refreshToken
+  const { accessToken } = await refreshTokenService(incomingRefreshToken)
+  const options = { httpOnly: true, secure: true }
+  return res
+    .cookie("accessToken", accessToken, options)
+    .status(200)
+    .json({ success: true, accessToken })
+})
+

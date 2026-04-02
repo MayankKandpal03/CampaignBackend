@@ -3,7 +3,7 @@
 
 import User from "../models/userModel.js";
 import Team from "../models/teamModel.js";
-
+import { AppError } from "../utils/errorHandler.js";
 // Create user
 export const createUserService = async (
   creator,
@@ -15,38 +15,50 @@ export const createUserService = async (
   team,
 ) => {
   if (creator.role === "process manager") {
-    await User.create({
+    if (!["manager", "process manager", "it"].includes(role)) {
+      throw new AppError("Invalid role assignment", 400);
+    }
+    const manager = await User.create({
       username,
       email,
       passwordHash: password,
       role,
-      teams: team,
     });
+    const teamDoc = await Team.create({
+      teamName: username,
+      managerId: manager._id,
+    });
+    manager.teams.push(teamDoc._id);
+    await manager.save({ validateBeforeSave: false });
   }
   if (creator.role === "manager") {
-    await User.create({
+    const user = await User.create({
       username,
       email,
       passwordHash: password,
       managerId: creator._id,
     });
+
+    await Team.findOneAndUpdate(
+      { managerId: creator._id },
+      { $push: { members: user._id } },
+      { upsert: true, new: true },
+    );
   }
 };
 
 // Delete user
 export const deleteUserService = async (user, id) => {
-  const delUser = User.findById(id);
+  const delUser = await User.findById(id);
+  if (!delUser) throw new AppError("Bad request",400);
+ 
   if (user.role === "process manager") {
     await User.findByIdAndDelete(id);
-    return {
-      delUser,
-    };
+    return delUser;
   }
   if (user.role === "manager" && delUser.role === "ppc") {
     await User.findByIdAndDelete(id);
-    return {
-      delUser,
-    };
+    return delUser;
   }
   return;
 };

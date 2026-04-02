@@ -3,7 +3,7 @@ import { createCampaignController, getCampaignController } from "../controllers/
 
 const router = Router();
 
-router.post("/create", createCampaignController);
-router.post("/get", getCampaignController);
+router.post("/create", verifyJWT, authorize("ppc", "manager"), createCampaignController);
+router.post("/get", verifyJWT, getCampaignController);
 
 export default router;

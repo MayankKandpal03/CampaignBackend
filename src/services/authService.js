@@ -1,6 +1,6 @@
 import User from "../models/userModel.js";
 import { AppError } from "../utils/errorHandler.js";
-
+import jwt from "jsonwebtoken"
 export const logoutService = async (user) => {
   await User.findByIdAndUpdate(
     user._id,

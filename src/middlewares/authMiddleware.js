@@ -11,23 +11,23 @@ import jwt from "jsonwebtoken";
  * If doesn't exist throw error otherwise call next()
  */
 
-const verifyJWT = asyncWrap(async (req, res) => {
+const verifyJWT = asyncWrap(async (req, res,next) => {
   // ?. prevents runtime error when accessing nested properties that may be null or undefined
   // Cookies are not always available that is why we use req.header to read value sent in HTTP request header
   // Authorization is a dedicated header for authentication credentials.
   const token =
     req.cookies?.accessToken ||
-    req.header("Authorization")?.replace("Bearer", "");
+    req.header("Authorization")?.replace("Bearer ", "");
 
   // Check if the token exist
-  if (!token) return AppError("Not authorized", 401);
+  if (!token) throw new AppError("Not authorized", 401);
 
   // Verify the token and store the token data in decoded token
   const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
   // Extract id to find user
   const user = await User.findById(decodedToken?._id);
-  if (!user) return AppError("Invalid Request", 401);
+  if (!user) throw new AppError("Invalid Request", 401);
   req.user = user;
   next();
 });

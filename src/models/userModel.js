@@ -28,7 +28,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       default: "ppc",
-      enum: ["ppc", "manager", "process_manager", "it"],
+      enum: ["ppc", "manager", "process manager", "it"],
     },
     managerId: {
       type: mongoose.Schema.Types.ObjectId,

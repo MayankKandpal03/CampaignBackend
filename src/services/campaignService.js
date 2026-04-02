@@ -34,7 +34,7 @@ export const getCampaignService = async (user) => {
   }
 
   if (user.role === "ppc") {
-    const campaigns = await Campaign.find({ id: user.id });
+    const campaigns = await Campaign.find({ createdBy: user._id });
     return campaigns;
   }
 };

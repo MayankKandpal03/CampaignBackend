@@ -8,7 +8,7 @@
  * export function
  */
 
-import { AppError } from "../utils/errorHandler";
+import { AppError } from "../utils/errorHandler.js";
 
 const authorize = (...allowedRoles) => {
   return (req, res, next) => {

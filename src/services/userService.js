@@ -15,7 +15,7 @@ export const createUserService = async (
   team,
 ) => {
   if (creator.role === "process manager") {
-    User.create({
+    await User.create({
       username,
       email,
       passwordHash: password,
@@ -24,7 +24,7 @@ export const createUserService = async (
     });
   }
   if (creator.role === "manager") {
-    User.create({
+    await User.create({
       username,
       email,
       passwordHash: password,
@@ -37,13 +37,13 @@ export const createUserService = async (
 export const deleteUserService = async (user, id) => {
   const delUser = User.findById(id);
   if (user.role === "process manager") {
-    User.findByIdAndDelete(id);
+    await User.findByIdAndDelete(id);
     return {
       delUser,
     };
   }
   if (user.role === "manager" && delUser.role === "ppc") {
-    User.findByIdAndDelete(id);
+    await User.findByIdAndDelete(id);
     return {
       delUser,
     };

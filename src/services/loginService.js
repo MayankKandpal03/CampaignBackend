@@ -12,18 +12,15 @@ const loginService = async (email, password) => {
    */
 
   // Validate Input
-  if (!email || !password)
-    throw new AppError({ message: "Fill all fields", statusCode: 400 });
+  if (!email || !password) throw new AppError("Fill all fields", 400);
 
   // Verify user
   const user = await User.findOne({ email });
-  if (!user)
-    throw new AppError({ message: "Invalid Credentials", statusCode: 401 });
+  if (!user) throw new AppError("Invalid Credentials", 401);
 
   // Verify password
   const isMatch = await user.isPasswordCorrect(password);
-  if (!isMatch)
-    throw new AppError({ message: "Invalid Credentials", statusCode: 401 });
+  if (!isMatch) throw new AppError("Invalid Credentials", 401);
 
   // Generate Access and refresh token
   const accessToken = user.generateAccessToken();

@@ -7,7 +7,7 @@ export const createCampaignController = asyncWrap(async(req,res)=>{
      await createCampaignService(user, message, requestedDate, requestedTime)
      res.status(200).json({
         success: true,
-        message: "User Created successfully"
+        message: "Campaign Created successfully"
      })
 })
 

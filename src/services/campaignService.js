@@ -1,6 +1,7 @@
 import Campaign from "../models/campaignModel.js";
 import User from "../models/userModel.js";
 import Team from "../models/teamModel.js"
+import { AppError } from "../utils/errorHandler.js";
 // Create Campaign
 // set default value as undefined in case requested date and time is not shared and we want the default value
 export const createCampaignService = async (
@@ -9,6 +10,7 @@ export const createCampaignService = async (
   requestedDate = undefined,
   requestedTime = undefined,
 ) => {
+  if (!message) throw new AppError("Message is required", 400)
   await Campaign.create({
     createdBy: user._id,
     message,

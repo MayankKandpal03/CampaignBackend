@@ -27,6 +27,10 @@ const campaignSchema = new mongoose.Schema(
       enum: ["transfer", "cancel", "done", "not done"], // cancel permanent
       default: "transfer",
     },
+    teamId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Team",
+    },
     // Process manager
     action: {
       type: String,

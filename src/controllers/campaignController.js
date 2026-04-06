@@ -1,22 +1,66 @@
-import { createCampaignService, getCampaignService } from "../services/campaignService.js";
+import Campaign from "../models/campaignModel.js";
+import {
+  createCampaignService,
+  getCampaignService,
+  updateCampaignService,
+} from "../services/campaignService.js";
 import { asyncWrap } from "../utils/errorHandler.js";
 
-export const createCampaignController = asyncWrap(async(req,res)=>{
-    const user=  req.user 
-    const {message, requestedDate, requestedTime} =req.body
-     await createCampaignService(user, message, requestedDate, requestedTime)
-     res.status(200).json({
-        success: true,
-        message: "Campaign Created successfully"
-     })
-})
+export const createCampaignController = asyncWrap(async (req, res) => {
+  const user = req.user;
+  const { message, requestedDate, requestedTime } = req.body;
+  await createCampaignService(user, message, requestedDate, requestedTime);
+  res.status(200).json({
+    success: true,
+    message: "Campaign Created successfully",
+  });
+});
 
-export const getCampaignController = asyncWrap(async(req,res)=>{
-     const user =req.user
-     const data = await getCampaignService(user, message, requestedDate, requestedTime)
-     res.status(200).json({
-        success: true,
-        data,
-        message: "Campaign fetched successfully"
-     })
-})
+export const getCampaignController = asyncWrap(async (req, res) => {
+  const user = req.user;
+  const data = await getCampaignService(
+    user,
+    message,
+    requestedDate,
+    requestedTime,
+  );
+  res.status(200).json({
+    success: true,
+    data,
+    message: "Campaign fetched successfully",
+  });
+});
+
+export const updateCampaignController = asyncWrap(async (req, res) => {
+  const user = req.user;
+  const {
+    CampaignId,
+    message,
+    status,
+    requestedDate,
+    requestedTime,
+    pmMessage,
+    action,
+    scheduleDate,
+    scheduleTime,
+    itMessage,
+    acknowledgement,
+  } = req.body;
+  const data = await updateCampaignService(user, CampaignId, {
+    message,
+    status,
+    requestedDate,
+    requestedTime,
+    pmMessage,
+    action,
+    scheduleDate,
+    scheduleTime,
+    itMessage,
+    acknowledgement,
+  });
+  res.status(200).json({
+    success: true,
+    data,
+    message: "Campaign updated successfully",
+  });
+});

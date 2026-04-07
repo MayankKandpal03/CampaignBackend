@@ -9,6 +9,7 @@ import { asyncWrap } from "../utils/errorHandler.js";
 export const createCampaignController = asyncWrap(async (req, res) => {
   const user = req.user;
   const { message, requestedDate, requestedTime, teamId } = req.body;
+  if (!message || !teamId) throw new AppError("Missing fields", 400);
   await createCampaignService(user, message, requestedDate, requestedTime, teamId);
   res.status(200).json({
     success: true,
@@ -29,7 +30,7 @@ export const getCampaignController = asyncWrap(async (req, res) => {
 export const updateCampaignController = asyncWrap(async (req, res) => {
   const user = req.user;
   const {
-    CampaignId,
+    campaignId,
     message,
     status,
     requestedDate,
@@ -41,7 +42,7 @@ export const updateCampaignController = asyncWrap(async (req, res) => {
     itMessage,
     acknowledgement,
   } = req.body;
-  const data = await updateCampaignService(user, CampaignId, {
+  const data = await updateCampaignService(user, campaignId, {
     message,
     status,
     requestedDate,

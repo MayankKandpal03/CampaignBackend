@@ -10,10 +10,10 @@ export const createCampaignService = async (
   message,
   requestedDate = undefined,
   requestedTime = undefined,
-  teamId
+  teamId,
 ) => {
   if (!message) throw new AppError("Message is required", 400);
-  if(!teamId) throw new AppError("Not in the team")
+  if (!teamId) throw new AppError("Not in the team");
   if (!["ppc", "manager"].includes(user.role))
     throw new AppError("Not Authorized", 400);
   await Campaign.create({
@@ -37,6 +37,12 @@ export const getCampaignService = async (user) => {
   // manager
   if (user.role === "manager") {
     const teamDoc = await Team.findOne({ managerId: user._id });
+    if (!teamDoc) {
+      const campaign = await Campaign.find({
+        createdBy: { $in: [user._id] },
+      });
+      return campaign
+    }
     const campaign = await Campaign.find({
       createdBy: { $in: [...teamDoc.members, user._id] },
     });
@@ -51,14 +57,16 @@ export const getCampaignService = async (user) => {
 
   //it
   if (user.role === "it") {
-    const campaign = await Campaign.find();
-    if (
-      (campaign.action === "approve" &&
-        campaign.scheduleDate === Date().toISOString().slice(0, 10),
-      campaign.scheduleTime === Date().toISOString().slice(11, 19))
-    ) {
-      return campaign;
-    }
+    const today = new Date();
+    const todayDate = today.toISOString().slice(0, 10);
+    const todayTime = today.toISOString().slice(11, 19);
+
+    const campaign = await Campaign.find({
+      action: "approve",
+      scheduleDate: todayDate,
+      scheduleTime: todayTime,
+    });
+    return campaign;
   }
 };
 
@@ -80,51 +88,67 @@ export const updateCampaignService = async (
   },
 ) => {
   // ppc or managers update message
-  const oldCampaign = await Campaign.findByIdAndUpdate(campaignId);
+  const oldCampaign = await Campaign.findById(campaignId);
   if (!oldCampaign) throw new AppError("Campaign not found", 404);
   if (oldCampaign.status === "cancel")
     throw new AppError("Campaign is already cancelled", 400);
   if (["ppc", "manager"].includes(user.role)) {
-    const campaign = await Campaign.findByIdAndUpdate(campaignId, {
-      $set: {
-        message,
-        status,
-        requestedDate,
-        requestedTime,
+    const campaign = await Campaign.findByIdAndUpdate(
+      campaignId,
+      {
+        $set: {
+          message,
+          status,
+          requestedDate,
+          requestedTime,
+        },
       },
-    }, {returnDocument: "after"});
+      { returnDocument: "after" },
+    );
     return campaign;
   }
   // Process manager
   if (user.role === "process manager") {
     if (!pmMessage) throw new AppError("Message not found", 400);
-    const campaign = await Campaign.findByIdAndUpdate(campaignId, {
-      $set: {
-        pmMessage,
-        action,
-        scheduleDate,
-        scheduleTime,
+    const campaign = await Campaign.findByIdAndUpdate(
+      campaignId,
+      {
+        $set: {
+          pmMessage,
+          action,
+          scheduleDate,
+          scheduleTime,
+        },
       },
-    }, {returnDocument: "after"});
+      { returnDocument: "after" },
+    );
     return campaign;
   }
 
   if (user.role === "it") {
     if (acknowledgement === "not done") {
-      const campaign = await Campaign.findByIdAndUpdate(campaignId, {
-        $set: { acknowledgement, itMessage },
-      }, {returnDocument: "after"});
+      const campaign = await Campaign.findByIdAndUpdate(
+        campaignId,
+        {
+          $set: { acknowledgement, itMessage },
+        },
+        { returnDocument: "after" },
+      );
       return campaign;
     }
     if (!itMessage) throw new AppError("Message not found", 400);
-    const campaign = await Campaign.findByIdAndUpdate(campaignId, {
-      $set: {
-        acknowledgement,
-        itMessage,
-        action: "done",
-        status: "done",
+    const campaign = await Campaign.findByIdAndUpdate(
+      campaignId,
+      {
+        $set: {
+          acknowledgement,
+          itMessage,
+          action: "done",
+          status: "done",
+        },
       },
-    }, {returnDocument: "after"});
+      { returnDocument: "after" },
+    );
     return campaign;
   }
 };

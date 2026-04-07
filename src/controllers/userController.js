@@ -8,15 +8,13 @@ import { asyncWrap } from "../utils/errorHandler.js";
 // Create user controller
 export const createUserController = asyncWrap(async (req, res) => {
   const creator = req.user;
-  const { username, email, password, role, managerId, team } = req.body;
+  const { username, email, password, role, } = req.body;
   await createUserService(
     creator,
     username,
     email,
     password,
     role,
-    managerId,
-    team,
   );
   return res
     .status(200)

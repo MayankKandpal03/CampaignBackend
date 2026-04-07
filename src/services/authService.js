@@ -11,11 +11,16 @@ export const logoutService = async (user) => {
 
 export const refreshTokenService = async (incomingRefreshToken) => {
   if (!incomingRefreshToken) throw new AppError("Unauthorized", 401);
+  let decoded;
+  try {
+    decooded = jwt.verify(
+      incomingRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET,
+    );
+  } catch (error) {
+    throw new AppError("Invalid refresh token", 401);
+  }
 
-  const decoded = jwt.verify(
-    incomingRefreshToken,
-    process.env.REFRESH_TOKEN_SECRET,
-  );
   const user = await User.findById(decoded._id).select("+refreshToken");
 
   if (!user || user.refreshToken !== incomingRefreshToken)

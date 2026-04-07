@@ -11,7 +11,7 @@ import jwt from "jsonwebtoken";
  * If doesn't exist throw error otherwise call next()
  */
 
-const verifyJWT = asyncWrap(async (req, res,next) => {
+const verifyJWT = asyncWrap(async (req, res, next) => {
   // ?. prevents runtime error when accessing nested properties that may be null or undefined
   // Cookies are not always available that is why we use req.header to read value sent in HTTP request header
   // Authorization is a dedicated header for authentication credentials.
@@ -23,7 +23,12 @@ const verifyJWT = asyncWrap(async (req, res,next) => {
   if (!token) throw new AppError("Not authorized", 401);
 
   // Verify the token and store the token data in decoded token
-  const decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+  let decodedToken;
+  try {
+    decodedToken = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+  } catch {
+    throw new AppError("Invalid or expired token", 401);
+  }
 
   // Extract id to find user
   const user = await User.findById(decodedToken?._id);
@@ -32,4 +37,4 @@ const verifyJWT = asyncWrap(async (req, res,next) => {
   next();
 });
 
-export default verifyJWT
+export default verifyJWT;

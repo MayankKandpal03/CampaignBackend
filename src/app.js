@@ -5,7 +5,7 @@ import cors from "cors";
 const app = express();
 
 // Middlewares
-app.use(cors({ origin: "*", credentials: true }));
+app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
 app.use(cookieParser());
 app.use(express.static("public"));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
@@ -21,5 +21,12 @@ app.use("/api/v1", loginRouter);
 app.use("/api/v1", logoutRouter);
 app.use("/api/v1/user", userRouter);
 app.use("/api/v1/campaign", campaignRouter);
+
+// Global error handler
+app.use((err, req, res, next) => {
+  res
+    .status(err.statusCode || 500)
+    .json({ success: false, message: err.message });
+});
 
 export default app;

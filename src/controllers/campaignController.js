@@ -4,7 +4,7 @@ import {
   getCampaignService,
   updateCampaignService,
 } from "../services/campaignService.js";
-import { asyncWrap } from "../utils/errorHandler.js";
+import { asyncWrap, AppError } from "../utils/errorHandler.js";
 
 export const createCampaignController = asyncWrap(async (req, res) => {
   const user = req.user;

@@ -13,7 +13,7 @@ export const refreshTokenService = async (incomingRefreshToken) => {
   if (!incomingRefreshToken) throw new AppError("Unauthorized", 401);
   let decoded;
   try {
-    decooded = jwt.verify(
+    decoded = jwt.verify(
       incomingRefreshToken,
       process.env.REFRESH_TOKEN_SECRET,
     );

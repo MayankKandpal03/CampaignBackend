@@ -2,7 +2,12 @@ import Campaign from "../models/campaignModel.js";
 import User from "../models/userModel.js";
 import Team from "../models/teamModel.js";
 import { AppError } from "../utils/errorHandler.js";
-
+import {
+  emitCampaignCreated,
+  emitCampaignUpdated,
+  emitITQueued,
+  emitITAck,
+} from "../socket/socket.js";
 // Create Campaign
 // set default value as undefined in case requested date and time is not shared and we want the default value
 export const createCampaignService = async (
@@ -16,14 +21,15 @@ export const createCampaignService = async (
   if (!teamId) throw new AppError("Not in the team");
   if (!["ppc", "manager"].includes(user.role))
     throw new AppError("Not Authorized", 400);
-  await Campaign.create({
+  const campaign = await Campaign.create({
     createdBy: user._id,
     message,
     requestedDate,
     requestedTime,
     teamId,
   });
-  return;
+  emitCampaignCreated(campaign);
+  return campaign;
 };
 
 // Get Campaign
@@ -41,7 +47,7 @@ export const getCampaignService = async (user) => {
       const campaign = await Campaign.find({
         createdBy: { $in: [user._id] },
       });
-      return campaign
+      return campaign;
     }
     const campaign = await Campaign.find({
       createdBy: { $in: [...teamDoc.members, user._id] },
@@ -105,11 +111,13 @@ export const updateCampaignService = async (
       },
       { returnDocument: "after" },
     );
+    emitCampaignUpdated(campaign);
     return campaign;
   }
   // Process manager
   if (user.role === "process manager") {
-    if (!pmMessage) throw new AppError("Message not found", 400);
+    if (action !== "cancel" && !pmMessage)
+      throw new AppError("Message required", 400);
     const campaign = await Campaign.findByIdAndUpdate(
       campaignId,
       {
@@ -122,6 +130,8 @@ export const updateCampaignService = async (
       },
       { returnDocument: "after" },
     );
+    if (action === "approve") emitITQueued(campaign);
+    else emitCampaignUpdated(campaign);
     return campaign;
   }
 
@@ -134,6 +144,7 @@ export const updateCampaignService = async (
         },
         { returnDocument: "after" },
       );
+      emitITAck(campaign);
       return campaign;
     }
     if (!itMessage) throw new AppError("Message not found", 400);
@@ -149,6 +160,7 @@ export const updateCampaignService = async (
       },
       { returnDocument: "after" },
     );
+    emitITAck(campaign);
     return campaign;
   }
 };

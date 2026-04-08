@@ -10,9 +10,10 @@ export const createCampaignController = asyncWrap(async (req, res) => {
   const user = req.user;
   const { message, requestedDate, requestedTime, teamId } = req.body;
   if (!message || !teamId) throw new AppError("Missing fields", 400);
-  await createCampaignService(user, message, requestedDate, requestedTime, teamId);
+  const result = await createCampaignService(user, message, requestedDate, requestedTime, teamId);
   res.status(200).json({
     success: true,
+    data:result,
     message: "Campaign Created successfully",
   });
 });

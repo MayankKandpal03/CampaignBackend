@@ -17,15 +17,27 @@ export const createCampaignService = async (
   teamId,
 ) => {
   if (!message) throw new AppError("Message is required", 400);
-  if (!teamId) throw new AppError("Not in the team");
-  if (!["ppc", "manager"].includes(user.role))
-    throw new AppError("Not Authorized", 400);
+  if (!teamId) throw new AppError("Team is required", 400);
+  if (!["ppc", "manager"].includes(user.role)) {
+    throw new AppError("Not authorized", 403);
+  }
+
+  const team =
+    user.role === "manager"
+      ? await Team.findOne({ _id: teamId, managerId: user._id })
+      : await Team.findOne({ _id: teamId, members: user._id });
+
+  if (!team) {
+    throw new AppError("Not authorized for this team", 403);
+  }
+
   const campaign = await Campaign.create({
     createdBy: user._id,
     message,
     requestedAt,
-    teamId,
+    teamId: team._id,
   });
+  
   emitCampaignCreated(campaign);
   return campaign;
 };

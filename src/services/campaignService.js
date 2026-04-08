@@ -9,12 +9,11 @@ import {
   emitITAck,
 } from "../socket/socket.js";
 // Create Campaign
-// set default value as undefined in case requested date and time is not shared and we want the default value
+// set default value as undefined in case requestedAt is not shared and we want the default value
 export const createCampaignService = async (
   user,
   message,
-  requestedDate = undefined,
-  requestedTime = undefined,
+  requestedAt,
   teamId,
 ) => {
   if (!message) throw new AppError("Message is required", 400);
@@ -24,8 +23,7 @@ export const createCampaignService = async (
   const campaign = await Campaign.create({
     createdBy: user._id,
     message,
-    requestedDate,
-    requestedTime,
+    requestedAt,
     teamId,
   });
   emitCampaignCreated(campaign);
@@ -63,14 +61,8 @@ export const getCampaignService = async (user) => {
 
   //it
   if (user.role === "it") {
-    const today = new Date();
-    const todayDate = today.toISOString().slice(0, 10);
-    const todayTime = today.toISOString().slice(11, 19);
-
     const campaign = await Campaign.find({
       action: "approve",
-      scheduleDate: todayDate,
-      scheduleTime: todayTime,
     });
     return campaign;
   }
@@ -83,12 +75,10 @@ export const updateCampaignService = async (
   {
     message,
     status,
-    requestedDate,
-    requestedTime,
+    requestedAt,
     pmMessage,
     action,
-    scheduleDate,
-    scheduleTime,
+    scheduleAt,
     itMessage,
     acknowledgement,
   },
@@ -105,8 +95,7 @@ export const updateCampaignService = async (
         $set: {
           message,
           status,
-          requestedDate,
-          requestedTime,
+          requestedAt,
         },
       },
       { returnDocument: "after" },
@@ -124,8 +113,7 @@ export const updateCampaignService = async (
         $set: {
           pmMessage,
           action,
-          scheduleDate,
-          scheduleTime,
+          scheduleAt,
         },
       },
       { returnDocument: "after" },

@@ -13,13 +13,9 @@ const campaignSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    requestedDate: {
+    requestedAt: {
       type: String,
-      default: () => new Date().toISOString().slice(0, 10),
-    },
-    requestedTime: {
-      type: String,
-      default: () => new Date().toISOString().slice(11, 19),
+      default: () => new Date()
     },
     // PPC
     status: {
@@ -36,13 +32,9 @@ const campaignSchema = new mongoose.Schema(
       type: String,
       enum: ["approve", "cancel", "done"], // roll back
     },
-    scheduleDate: {
+    scheduleAt: {
       type: String,
-      default: () => new Date().toISOString().slice(0, 10),
-    },
-    scheduleTime: {
-      type: String,
-      default: () => new Date().toISOString().slice(11, 19),
+      default: () => new Date()
     },
     pmMessage: {
       type: String,

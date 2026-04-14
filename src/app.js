@@ -32,11 +32,13 @@ import loginRouter from "./routes/loginRoute.js";
 import logoutRouter from "./routes/authRoute.js";
 import userRouter from "./routes/userRoute.js";
 import campaignRouter from "./routes/campaignRoute.js";
+import teamRouter from "./routes/teamRoute.js";
 
 app.use("/api/v1", loginRouter);
 app.use("/api/v1", logoutRouter);
 app.use("/api/v1/user", userRouter);
 app.use("/api/v1/campaign", campaignRouter);
+app.use("/api/v1/team", teamRouter);
 
 app.use((err, req, res, next) => {
   res

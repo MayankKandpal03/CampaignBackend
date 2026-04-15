@@ -4,71 +4,71 @@ import User from "../models/userModel.js";
 
 let io;
 
+/**
+ * Convert a Mongoose document or plain object into a serialisable plain object
+ * and attach the performer's username + role for frontend notification messages.
+ */
+const buildPayload = (campaign, performer = {}) => {
+  const base = campaign.toJSON
+    ? campaign.toJSON()
+    : campaign.toObject
+    ? campaign.toObject()
+    : { ...campaign };
+
+  return {
+    ...base,
+    performerName: performer.username || "unknown",
+    performerRole: performer.role    || "unknown",
+  };
+};
+
 export const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL,
+      origin:      process.env.CLIENT_URL,
       credentials: true,
     },
   });
 
-  // ── Auth Middleware ──
-  // Runs before every connection. Verifies JWT and attaches user to socket.
+  // ── Auth Middleware ──────────────────────────────────────────────────────────
   io.use(async (socket, next) => {
     try {
-      // Client sends token via: socket({ auth: { token } }) or as cookie
       const token =
         socket.handshake.auth?.token ||
         socket.handshake.headers?.cookie
           ?.split("; ")
-          .find((c) => c.startsWith("accessToken="))
+          .find(c => c.startsWith("accessToken="))
           ?.split("=")[1];
 
       if (!token) return next(new Error("Not authenticated"));
 
       const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-      const user = await User.findById(decoded._id);
+      const user    = await User.findById(decoded._id);
       if (!user) return next(new Error("User not found"));
 
-      socket.user = user; // attach user to socket for use in events
+      socket.user = user;
       next();
     } catch {
       next(new Error("Invalid token"));
     }
   });
 
-  // ── Connection Handler ──
+  // ── Connection Handler ───────────────────────────────────────────────────────
   io.on("connection", async (socket) => {
     const user = socket.user;
     console.log(`🔌 Connected: ${user.username} [${user.role}]`);
 
-    // ── Join role-based rooms ──
-    // Every user joins their personal room
+    // Personal room — always joined
     socket.join(`room:user_${user._id}`);
 
-    if (user.role === "process manager") {
-      socket.join("room:all_pm"); // sees all campaigns
+    if (user.role === "process manager") socket.join("room:all_pm");
+    if (user.role === "it")              socket.join("room:it");
+
+    if (user.role === "manager" || user.role === "ppc") {
+      user.teams.forEach(teamId => socket.join(`room:team_${teamId}`));
     }
 
-    if (user.role === "it") {
-      socket.join("room:it"); // receives approved campaigns
-    }
-
-    if (user.role === "manager") {
-      // Join all teams this manager belongs to
-      user.teams.forEach((teamId) => {
-        socket.join(`room:team_${teamId}`);
-      });
-    }
-
-    if (user.role === "ppc") {
-      // PPC joins their team rooms
-      user.teams.forEach((teamId) => {
-        socket.join(`room:team_${teamId}`);
-      });
-    }
-
-    socket.on("disconnect", (reason) => {
+    socket.on("disconnect", reason => {
       console.log(`❌ Disconnected: ${user.username} — ${reason}`);
     });
   });
@@ -76,30 +76,102 @@ export const initSocket = (httpServer) => {
   return io;
 };
 
-// ── Emit Helpers ──
-// Call these from your service layer after DB operations.
+// ── Emit Helpers ──────────────────────────────────────────────────────────────
 
-export const emitCampaignCreated = (campaign) => {
-  // Notify the creator's team + all process managers
-  io.to(`room:team_${campaign.teamId}`).to("room:all_pm").emit("campaign:created", campaign);
+/**
+ * Campaign CREATED.
+ *
+ * PPC creates:     notify PPC themselves + their manager + all PMs
+ *                  → room:team + room:all_pm
+ *
+ * Manager creates: notify manager themselves + all PMs
+ *                  → room:user_{manager._id} + room:all_pm
+ *                  (intentionally does NOT notify all PPCs in team)
+ */
+export const emitCampaignCreated = (campaign, performer = {}) => {
+  const payload = buildPayload(campaign, performer);
+
+  if (performer.role === "ppc") {
+    io.to(`room:team_${campaign.teamId}`)
+      .to("room:all_pm")
+      .emit("campaign:created", payload);
+  } else {
+    // manager, or any other role creating a campaign
+    io.to(`room:user_${performer._id}`)
+      .to("room:all_pm")
+      .emit("campaign:created", payload);
+  }
 };
 
-export const emitCampaignUpdated = (campaign) => {
-  io.to(`room:team_${campaign.teamId}`).to("room:all_pm").emit("campaign:updated", campaign);
+/**
+ * Campaign UPDATED / CANCELLED.
+ *
+ * PPC updates their own:           notify PPC + manager + all PMs
+ *                                  → room:team + room:all_pm
+ *
+ * Manager updates a PPC campaign:  notify the specific PPC (owner) + all PMs
+ *                                  + manager themselves
+ *                                  → room:user_{createdBy} + room:all_pm
+ *                                    + room:user_{manager._id}
+ *
+ * Manager updates their own:       same two rooms collapse to same person
+ *
+ * PM cancels:                      notify team (owner + manager) + all PMs
+ *                                  → room:team + room:all_pm
+ */
+export const emitCampaignUpdated = (campaign, performer = {}) => {
+  const payload = buildPayload(campaign, performer);
+
+  if (performer.role === "ppc") {
+    io.to(`room:team_${campaign.teamId}`)
+      .to("room:all_pm")
+      .emit("campaign:updated", payload);
+
+  } else if (performer.role === "manager") {
+    io.to(`room:user_${campaign.createdBy}`)
+      .to(`room:user_${performer._id}`)
+      .to("room:all_pm")
+      .emit("campaign:updated", payload);
+
+  } else {
+    // process manager (cancel) or any other role
+    io.to(`room:team_${campaign.teamId}`)
+      .to("room:all_pm")
+      .emit("campaign:updated", payload);
+  }
 };
 
-export const emitCampaignDeleted = (campaign) => {
-  io.to(`room:team_${campaign.teamId}`).to("room:all_pm").emit("campaign:deleted", { _id: campaign._id });
+export const emitCampaignDeleted = (campaign, performer = {}) => {
+  const payload = { _id: campaign._id, performerName: performer.username || "unknown" };
+  io.to(`room:team_${campaign.teamId}`)
+    .to("room:all_pm")
+    .emit("campaign:deleted", payload);
 };
 
-export const emitITQueued = (campaign) => {
-  // Notify IT room when Process Manager marks campaign as "approve"
-  io.to("room:it").emit("campaign:it_queued", campaign);
+/**
+ * Campaign APPROVED by PM → forwarded to IT.
+ * Notify: campaign team (owner + manager) + all PMs + all IT.
+ * FIX: previously only notified room:it — team and PMs missed the event.
+ */
+export const emitITQueued = (campaign, performer = {}) => {
+  const payload = buildPayload(campaign, performer);
+  io.to(`room:team_${campaign.teamId}`)
+    .to("room:all_pm")
+    .to("room:it")
+    .emit("campaign:it_queued", payload);
 };
 
-export const emitITAck = (campaign) => {
-  // Notify team + PM when IT sends acknowledgement
-  io.to(`room:team_${campaign.teamId}`).to("room:all_pm").emit("campaign:it_ack", campaign);
+/**
+ * IT ACKNOWLEDGED.
+ * Notify: campaign team (owner + manager) + all PMs + all IT (incl. performer).
+ * FIX: previously did not include room:it so IT performer had no self-notification.
+ */
+export const emitITAck = (campaign, performer = {}) => {
+  const payload = buildPayload(campaign, performer);
+  io.to(`room:team_${campaign.teamId}`)
+    .to("room:all_pm")
+    .to("room:it")
+    .emit("campaign:it_ack", payload);
 };
 
 export const getIO = () => {

@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createUserController,
   deleteUserController,
+  listUsersController
 } from "../controllers/userController.js";
 import verifyJWT from "../middlewares/authMiddleware.js";
 import authorize from "../middlewares/rbacMiddleware.js";
@@ -19,6 +20,13 @@ router.post(
   verifyJWT,
   authorize("process manager", "manager"),
   deleteUserController,
+);
+
+router.get(
+  "/list",
+  verifyJWT,
+  authorize("process manager"),
+  listUsersController,
 );
 
 export default router;

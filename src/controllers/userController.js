@@ -1,6 +1,7 @@
 import {
   createUserService,
   deleteUserService,
+  listUsersService
 } from "../services/userService.js";
 
 import { asyncWrap } from "../utils/errorHandler.js";
@@ -34,4 +35,10 @@ export const deleteUserController = asyncWrap(async (req, res) => {
     success: true,
     message: response.username + " deleted sucessfully",
   });
+});
+
+// List user Controller
+export const listUsersController = asyncWrap(async (req, res) => {
+  const users = await listUsersService(req.user);
+  return res.status(200).json({ success: true, data: users });
 });

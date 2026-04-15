@@ -36,6 +36,8 @@ const loginService = async (email, password) => {
       username: user.username,
       email: user.email,
       role: user.role,
+      teams:     user.teams,
+      managerId: user.managerId,
     },
     accessToken,
     refreshToken,

@@ -105,3 +105,16 @@ export const deleteUserService = async (user, id) => {
 
   throw new AppError("Not authorized to delete user", 403);
 };
+
+export const listUsersService = async (requestingUser) => {
+  if (requestingUser.role !== "process manager") {
+    throw new AppError("Not authorized", 403);
+  }
+ 
+  const users = await User.find({})
+    .select("-passwordHash -refreshToken")
+    .populate("managerId", "username email _id")
+    .lean();
+ 
+  return users;
+};

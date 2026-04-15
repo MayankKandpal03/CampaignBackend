@@ -1,14 +1,15 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-
+import dotenv from "dotenv"
+dotenv.config()
 const app = express();
 const configuredOrigins = process.env.CLIENT_URL?.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const allowedOrigins = configuredOrigins?.length
   ? configuredOrigins
-  : ["http://localhost:5173"];
+  : ["http://localhost:5173", "https://campaign-frontend-swart.vercel.app"];
 
 app.use(
   cors({

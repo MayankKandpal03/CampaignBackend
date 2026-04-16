@@ -1,4 +1,4 @@
-// src/services/campaignService.js
+// src/services/campaignService.js  (backend)
 import Campaign from "../models/campaignModel.js";
 import Team     from "../models/teamModel.js";
 import { AppError } from "../utils/errorHandler.js";
@@ -9,13 +9,14 @@ import {
   emitITAck,
 } from "../socket/socket.js";
 
-// Fields exposed to frontend for every campaign's creator
-const CREATOR_FIELDS = "username email role _id";
+// ── managerId is included so socket.js can identify the owner's manager
+//    and route PM / IT events to the correct personal room.
+const CREATOR_FIELDS = "username email role _id managerId";
 
 /**
  * Helper: fetch a campaign by id with createdBy populated.
  * Used after every create / findByIdAndUpdate so socket payloads
- * and API responses always carry { _id, username, email, role }
+ * and API responses always carry { _id, username, email, role, managerId }
  * instead of a raw ObjectId.
  */
 const findPopulated = (id) =>
@@ -43,17 +44,15 @@ export const createCampaignService = async (user, message, requestedAt, teamId) 
     teamId:      team._id,
   });
 
-  // FIX: populate before emitting so the socket payload has createdBy.username
+  // Populate before emitting so the socket payload has createdBy.username + managerId
   const campaign = await findPopulated(raw._id);
+  // performer (user) carries managerId from authMiddleware for PPC routing
   emitCampaignCreated(campaign, user);
   return campaign;
 };
 
 // ── Get Campaign ───────────────────────────────────────────────────────────────
 export const getCampaignService = async (user) => {
-  // FIX: every query now populates createdBy so dashboards show the creator name
-  // without needing a second round-trip.
-
   if (user.role === "process manager") {
     return await Campaign.find().populate("createdBy", CREATOR_FIELDS);
   }
@@ -75,18 +74,16 @@ export const getCampaignService = async (user) => {
   }
 
   if (user.role === "it") {
-    // FIX: campaign receipt timing —
-    //   • Only campaigns whose scheduleAt has already arrived (or has no scheduleAt)
-    //   • Campaigns cancelled by PPC/Manager (status="cancel") must NOT appear
-    //   • scheduleAt is stored as String so we filter in JS, not in MongoDB query
+    // Only approved campaigns whose scheduleAt has arrived (or has no scheduleAt),
+    // and not cancelled by PPC/Manager after PM approved.
     const approved = await Campaign.find({
       action: "approve",
-      status: { $ne: "cancel" },   // guard: PPC/Manager cancelled after PM approved
+      status: { $ne: "cancel" },
     }).populate("createdBy", CREATOR_FIELDS);
 
     const now = Date.now();
     return approved.filter((c) => {
-      if (!c.scheduleAt) return true;          // no schedule → show immediately
+      if (!c.scheduleAt) return true;
       return new Date(c.scheduleAt).getTime() <= now;
     });
   }
@@ -119,8 +116,8 @@ export const updateCampaignService = async (
       { $set: { message, status, requestedAt } },
       { returnDocument: "after" },
     );
-    // FIX: populate before emit so manager/PM dashboard receives username in payload
     const campaign = await findPopulated(raw._id);
+    // performer (user) carries managerId for PPC routing in socket.js
     emitCampaignUpdated(campaign, user);
     return campaign;
   }
@@ -135,7 +132,7 @@ export const updateCampaignService = async (
       { $set: { pmMessage, action, scheduleAt } },
       { returnDocument: "after" },
     );
-    // FIX: populate so PPC/Manager dashboard updates show creator correctly
+    // createdBy is populated with managerId so socket can route to owner's manager
     const campaign = await findPopulated(raw._id);
 
     if (action === "approve") {

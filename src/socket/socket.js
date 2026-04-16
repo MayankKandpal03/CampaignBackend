@@ -4,10 +4,6 @@ import User from "../models/userModel.js";
 
 let io;
 
-/**
- * Attach performerName + performerRole to every outgoing payload.
- * The frontend uses performerName for human-readable notification messages.
- */
 const buildPayload = (campaign, performer = {}) => {
   const base = campaign.toJSON
     ? campaign.toJSON()
@@ -20,6 +16,25 @@ const buildPayload = (campaign, performer = {}) => {
     performerName: performer.username || "unknown",
     performerRole: performer.role    || "unknown",
   };
+};
+
+/**
+ * Extract owner id, role, and managerId from campaign.createdBy.
+ * Requires CREATOR_FIELDS in campaignService to include "managerId".
+ */
+const getOwnerInfo = (campaign) => {
+  const cb = campaign.createdBy;
+  if (!cb) return { ownerId: null, ownerRole: null, ownerManagerId: null };
+
+  if (typeof cb === "object") {
+    return {
+      ownerId:        cb._id?.toString()        ?? null,
+      ownerRole:      cb.role                   ?? null,
+      ownerManagerId: cb.managerId?.toString()  ?? null,
+    };
+  }
+  // Not populated — only id available
+  return { ownerId: cb.toString(), ownerRole: null, ownerManagerId: null };
 };
 
 export const initSocket = (httpServer) => {
@@ -51,13 +66,13 @@ export const initSocket = (httpServer) => {
     const user = socket.user;
     console.log(`🔌 Connected: ${user.username} [${user.role}]`);
 
-    // Every user has a personal room
+    // Every user gets a personal room for targeted delivery
     socket.join(`room:user_${user._id}`);
 
     if (user.role === "process manager") socket.join("room:all_pm");
     if (user.role === "it")              socket.join("room:it");
 
-    // Managers and PPCs join their team rooms (used for manager-level events only)
+    // Team rooms kept for legacy delete events
     if (user.role === "manager" || user.role === "ppc") {
       user.teams.forEach(tid => socket.join(`room:team_${tid}`));
     }
@@ -71,98 +86,114 @@ export const initSocket = (httpServer) => {
 };
 
 // ── Emit helpers ─────────────────────────────────────────────────────────────
-// Each helper receives the campaign, the acting user, and an optional managerId
-// so we can target rooms precisely without querying the DB here.
+//
+// NOTE on socket.io v4 room targeting:
+//   io.to(room).to(room2)  returns a NEW BroadcastOperator each call.
+//   Storing the intermediate result and calling .to() again does NOT mutate
+//   the stored reference — the extra room is silently lost.
+//
+//   CORRECT pattern: io.to(["room1", "room2", ...]).emit(...)
+//   This is used exclusively below to avoid the stale-reference bug.
+//
+// ── Notification / update routing rules ──────────────────────────────────────
+//
+//   PPC creates or updates   → manager (personal room) + all PMs
+//                              NOT back to PPC — their store action already
+//                              applied the change locally, which also prevents
+//                              the race-condition duplicate on the PPC dashboard.
+//
+//   Manager creates or updates → all PMs only
+//                                NOT back to manager — local state handles it.
+//                                NOT to campaign-owner PPCs.
+//
+//   PM acts (approve/cancel) → campaign owner + all PMs
+//                              + owner's manager IF owner is PPC
+//                              NOT to other team members.
+//
+//   IT acknowledges          → campaign owner + all PMs + all IT
+//                              + owner's manager IF owner is PPC
 
 /**
  * Campaign CREATED.
- *
- * PPC creates    → only the PPC themselves + their manager + all PMs
- *                  FIX: was emitting to room:team which notified ALL PPCs in team
- *
- * Manager creates → manager themselves + all PMs
  */
-export const emitCampaignCreated = (campaign, performer = {}, managerId = null) => {
+export const emitCampaignCreated = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
 
   if (performer.role === "ppc") {
-    const emit = io
-      .to(`room:user_${performer._id}`)   // PPC themselves
-      .to("room:all_pm");                 // All process managers
+    // Send to PPC's manager (personal room) + all PMs.
+    // performer is the full User doc from authMiddleware, so managerId is available.
+    const rooms = ["room:all_pm"];
+    if (performer.managerId) rooms.push(`room:user_${performer.managerId}`);
+    io.to(rooms).emit("campaign:created", payload);
 
-    if (managerId) emit.to(`room:user_${managerId}`); // Their manager only
-
-    emit.emit("campaign:created", payload);
-  } else {
-    // Manager (or any other role) creating
-    io.to(`room:user_${performer._id}`)
-      .to("room:all_pm")
-      .emit("campaign:created", payload);
+  } else if (performer.role === "manager") {
+    // Managers only notify PMs. Their own local state is already updated.
+    io.to("room:all_pm").emit("campaign:created", payload);
   }
 };
 
 /**
  * Campaign UPDATED / CANCELLED.
- *
- * PPC updates     → PPC + their manager + all PMs
- * Manager updates → the campaign owner (PPC) + manager + all PMs
- * PM cancels/acts → campaign owner + manager (via team room) + all PMs
  */
-export const emitCampaignUpdated = (campaign, performer = {}, managerId = null) => {
+export const emitCampaignUpdated = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
 
   if (performer.role === "ppc") {
-    const emit = io
-      .to(`room:user_${performer._id}`)
-      .to("room:all_pm");
-    if (managerId) emit.to(`room:user_${managerId}`);
-    emit.emit("campaign:updated", payload);
+    const rooms = ["room:all_pm"];
+    if (performer.managerId) rooms.push(`room:user_${performer.managerId}`);
+    io.to(rooms).emit("campaign:updated", payload);
 
   } else if (performer.role === "manager") {
-    io.to(`room:user_${campaign.createdBy}`)  // Campaign owner
-      .to(`room:user_${performer._id}`)       // Manager themselves
-      .to("room:all_pm")
-      .emit("campaign:updated", payload);
+    // Only PMs. No PPCs, not even the campaign owner.
+    io.to("room:all_pm").emit("campaign:updated", payload);
 
-  } else {
-    // Process manager cancel / IT — notify team + all PMs
-    io.to(`room:team_${campaign.teamId}`)
-      .to("room:all_pm")
-      .emit("campaign:updated", payload);
+  } else if (performer.role === "process manager") {
+    const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
+    const rooms = ["room:all_pm"];
+    // Always notify the campaign owner
+    if (ownerId) rooms.push(`room:user_${ownerId}`);
+    // If owner is PPC, also notify their manager
+    if (ownerRole === "ppc" && ownerManagerId) rooms.push(`room:user_${ownerManagerId}`);
+    io.to(rooms).emit("campaign:updated", payload);
   }
 };
 
 export const emitCampaignDeleted = (campaign, performer = {}) => {
+  // Team room is fine here — deletion is visible to whole team
   io.to(`room:team_${campaign.teamId}`)
     .to("room:all_pm")
     .emit("campaign:deleted", {
-      _id:          campaign._id,
+      _id:           campaign._id,
       performerName: performer.username || "unknown",
     });
 };
 
 /**
- * Campaign APPROVED → sent to IT queue.
- * Notify: team (owner + manager) + all PMs + all IT.
+ * Campaign APPROVED → forwarded to IT queue.
+ * PM approves → owner + all PMs + all IT + owner's manager (if PPC).
  */
 export const emitITQueued = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
-  io.to(`room:team_${campaign.teamId}`)
-    .to("room:all_pm")
-    .to("room:it")
-    .emit("campaign:it_queued", payload);
+  const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
+
+  const rooms = ["room:all_pm", "room:it"];
+  if (ownerId)                               rooms.push(`room:user_${ownerId}`);
+  if (ownerRole === "ppc" && ownerManagerId) rooms.push(`room:user_${ownerManagerId}`);
+  io.to(rooms).emit("campaign:it_queued", payload);
 };
 
 /**
  * IT ACKNOWLEDGED.
- * Notify: team (owner + manager) + all PMs + all IT (incl. performer).
+ * IT acks → owner + all PMs + all IT + owner's manager (if PPC).
  */
 export const emitITAck = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
-  io.to(`room:team_${campaign.teamId}`)
-    .to("room:all_pm")
-    .to("room:it")
-    .emit("campaign:it_ack", payload);
+  const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
+
+  const rooms = ["room:all_pm", "room:it"];
+  if (ownerId)                               rooms.push(`room:user_${ownerId}`);
+  if (ownerRole === "ppc" && ownerManagerId) rooms.push(`room:user_${ownerManagerId}`);
+  io.to(rooms).emit("campaign:it_ack", payload);
 };
 
 export const getIO = () => {

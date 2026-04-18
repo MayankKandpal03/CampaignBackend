@@ -1,9 +1,12 @@
 import { Server } from "socket.io";
-import jwt  from "jsonwebtoken";
-import User from "../models/userModel.js";
+import jwt      from "jsonwebtoken";
+import User     from "../models/userModel.js";
+import Campaign from "../models/campaignModel.js";
+import { scheduleDelivery } from "./campaignScheduler.js";
 
 let io;
 
+// ── Payload builder ──────────────────────────────────────────────────────────
 const buildPayload = (campaign, performer = {}) => {
   const base = campaign.toJSON
     ? campaign.toJSON()
@@ -18,10 +21,7 @@ const buildPayload = (campaign, performer = {}) => {
   };
 };
 
-/**
- * Extract owner id, role, and managerId from campaign.createdBy.
- * Requires CREATOR_FIELDS in campaignService to include "managerId".
- */
+// ── Extract owner info from populated createdBy ──────────────────────────────
 const getOwnerInfo = (campaign) => {
   const cb = campaign.createdBy;
   if (!cb) return { ownerId: null, ownerRole: null, ownerManagerId: null };
@@ -33,16 +33,18 @@ const getOwnerInfo = (campaign) => {
       ownerManagerId: cb.managerId?.toString()  ?? null,
     };
   }
-  // Not populated — only id available
   return { ownerId: cb.toString(), ownerRole: null, ownerManagerId: null };
 };
 
+// Fields populated on createdBy — must include managerId so getOwnerInfo works
+const CREATOR_FIELDS = "username email role _id managerId";
+
+// ── Socket server init ───────────────────────────────────────────────────────
 export const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: { origin: process.env.CLIENT_URL, credentials: true },
   });
 
-  // ── Auth middleware ──────────────────────────────────────────────────────────
   io.use(async (socket, next) => {
     try {
       const token =
@@ -58,21 +60,20 @@ export const initSocket = (httpServer) => {
       if (!user) return next(new Error("User not found"));
       socket.user = user;
       next();
-    } catch { next(new Error("Invalid token")); }
+    } catch {
+      next(new Error("Invalid token"));
+    }
   });
 
-  // ── Connection handler ───────────────────────────────────────────────────────
   io.on("connection", async (socket) => {
     const user = socket.user;
     console.log(`🔌 Connected: ${user.username} [${user.role}]`);
 
-    // Every user gets a personal room for targeted delivery
     socket.join(`room:user_${user._id}`);
 
     if (user.role === "process manager") socket.join("room:all_pm");
     if (user.role === "it")              socket.join("room:it");
 
-    // Team rooms kept for legacy delete events
     if (user.role === "manager" || user.role === "ppc") {
       user.teams.forEach(tid => socket.join(`room:team_${tid}`));
     }
@@ -85,55 +86,40 @@ export const initSocket = (httpServer) => {
   return io;
 };
 
-// ── Emit helpers ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Routing rules
 //
-// NOTE on socket.io v4 room targeting:
-//   io.to(room).to(room2)  returns a NEW BroadcastOperator each call.
-//   Storing the intermediate result and calling .to() again does NOT mutate
-//   the stored reference — the extra room is silently lost.
+//  PPC create/update    → manager's personal room + room:all_pm
+//  Manager create       → room:all_pm only
+//  Manager update       → room:all_pm + campaign owner's personal room  ← FIX
+//  PM approve           → room:all_pm + owner + owner's manager (if PPC)
+//                         IT: immediate if due now, setTimeout if future ← FIX
+//  PM cancel            → room:all_pm + owner + owner's manager (if PPC)
+//  IT ack               → room:all_pm + room:it + owner + owner's manager
 //
-//   CORRECT pattern: io.to(["room1", "room2", ...]).emit(...)
-//   This is used exclusively below to avoid the stale-reference bug.
-//
-// ── Notification / update routing rules ──────────────────────────────────────
-//
-//   PPC creates or updates   → manager (personal room) + all PMs
-//                              NOT back to PPC — their store action already
-//                              applied the change locally, which also prevents
-//                              the race-condition duplicate on the PPC dashboard.
-//
-//   Manager creates or updates → all PMs only
-//                                NOT back to manager — local state handles it.
-//                                NOT to campaign-owner PPCs.
-//
-//   PM acts (approve/cancel) → campaign owner + all PMs
-//                              + owner's manager IF owner is PPC
-//                              NOT to other team members.
-//
-//   IT acknowledges          → campaign owner + all PMs + all IT
-//                              + owner's manager IF owner is PPC
+//  io.to([array]).emit() used exclusively — avoids socket.io v4 stale
+//  BroadcastOperator bug with chained .to() calls.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Campaign CREATED.
- */
 export const emitCampaignCreated = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
 
   if (performer.role === "ppc") {
-    // Send to PPC's manager (personal room) + all PMs.
-    // performer is the full User doc from authMiddleware, so managerId is available.
     const rooms = ["room:all_pm"];
     if (performer.managerId) rooms.push(`room:user_${performer.managerId}`);
     io.to(rooms).emit("campaign:created", payload);
 
   } else if (performer.role === "manager") {
-    // Managers only notify PMs. Their own local state is already updated.
     io.to("room:all_pm").emit("campaign:created", payload);
   }
 };
 
 /**
- * Campaign UPDATED / CANCELLED.
+ * Campaign UPDATED or CANCELLED.
+ *
+ * FIX – Issue 1:
+ *   manager role now also emits to the campaign owner's personal room.
+ *   Before this fix the owner (PPC) only saw the change after a manual refresh.
  */
 export const emitCampaignUpdated = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
@@ -144,24 +130,23 @@ export const emitCampaignUpdated = (campaign, performer = {}) => {
     io.to(rooms).emit("campaign:updated", payload);
 
   } else if (performer.role === "manager") {
-    // Only PMs. No PPCs, not even the campaign owner.
-    io.to("room:all_pm").emit("campaign:updated", payload);
+    // Include the campaign owner so they see manager edits in real-time
+    const { ownerId } = getOwnerInfo(campaign);
+    const rooms = ["room:all_pm"];
+    if (ownerId) rooms.push(`room:user_${ownerId}`);
+    io.to(rooms).emit("campaign:updated", payload);
 
   } else if (performer.role === "process manager") {
     const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
     const rooms = ["room:all_pm"];
-    // Always notify the campaign owner
-    if (ownerId) rooms.push(`room:user_${ownerId}`);
-    // If owner is PPC, also notify their manager
+    if (ownerId)                               rooms.push(`room:user_${ownerId}`);
     if (ownerRole === "ppc" && ownerManagerId) rooms.push(`room:user_${ownerManagerId}`);
     io.to(rooms).emit("campaign:updated", payload);
   }
 };
 
 export const emitCampaignDeleted = (campaign, performer = {}) => {
-  // Team room is fine here — deletion is visible to whole team
-  io.to(`room:team_${campaign.teamId}`)
-    .to("room:all_pm")
+  io.to([`room:team_${campaign.teamId}`, "room:all_pm"])
     .emit("campaign:deleted", {
       _id:           campaign._id,
       performerName: performer.username || "unknown",
@@ -169,23 +154,49 @@ export const emitCampaignDeleted = (campaign, performer = {}) => {
 };
 
 /**
- * Campaign APPROVED → forwarded to IT queue.
- * PM approves → owner + all PMs + all IT + owner's manager (if PPC).
+ * Campaign APPROVED by PM.
+ *
+ * FIX – Issue 3:
+ *   PMs and the campaign owner are always notified immediately (they need
+ *   to see the "approved / sent to IT" status right away).
+ *
+ *   IT delivery:
+ *     • scheduleAt ≤ now (or absent) → push to room:it immediately.
+ *     • scheduleAt is in the future  → register a precise setTimeout via
+ *       campaignScheduler so IT receives the campaign at the exact scheduled
+ *       moment without any manual refresh or polling.
  */
 export const emitITQueued = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
   const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
 
-  const rooms = ["room:all_pm", "room:it"];
-  if (ownerId)                               rooms.push(`room:user_${ownerId}`);
-  if (ownerRole === "ppc" && ownerManagerId) rooms.push(`room:user_${ownerManagerId}`);
-  io.to(rooms).emit("campaign:it_queued", payload);
+  const now          = Date.now();
+  const scheduleTime = campaign.scheduleAt
+    ? new Date(campaign.scheduleAt).getTime()
+    : 0;
+  const isFuture = campaign.scheduleAt && scheduleTime > now;
+
+  // Always notify PMs and the campaign owner immediately
+  const immediateRooms = ["room:all_pm"];
+  if (ownerId)                               immediateRooms.push(`room:user_${ownerId}`);
+  if (ownerRole === "ppc" && ownerManagerId) immediateRooms.push(`room:user_${ownerManagerId}`);
+  io.to(immediateRooms).emit("campaign:it_queued", payload);
+
+  if (isFuture) {
+    const delay = scheduleTime - now;
+    console.log(
+      `⏰ Scheduling IT delivery for campaign ${campaign._id} in ${Math.round(delay / 1000)}s`
+    );
+    scheduleDelivery(campaign._id.toString(), delay, () => {
+      console.log(`📤 Delivering scheduled campaign ${campaign._id} to IT`);
+      io.to("room:it").emit("campaign:it_queued", payload);
+    });
+  } else {
+    // Due now — deliver immediately
+    io.to("room:it").emit("campaign:it_queued", payload);
+  }
 };
 
-/**
- * IT ACKNOWLEDGED.
- * IT acks → owner + all PMs + all IT + owner's manager (if PPC).
- */
 export const emitITAck = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
   const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
@@ -194,6 +205,46 @@ export const emitITAck = (campaign, performer = {}) => {
   if (ownerId)                               rooms.push(`room:user_${ownerId}`);
   if (ownerRole === "ppc" && ownerManagerId) rooms.push(`room:user_${ownerManagerId}`);
   io.to(rooms).emit("campaign:it_ack", payload);
+};
+
+/**
+ * Restore scheduled IT delivery timers after a server restart.
+ *
+ * On startup: query all approved, not-yet-delivered, future-scheduled
+ * campaigns and register a setTimeout for each. This means IT always
+ * receives campaigns on time even if the server was restarted while a
+ * timer was pending.
+ *
+ * Call from index.js AFTER initSocket() resolves and the DB is connected.
+ */
+export const restoreScheduledDeliveries = async () => {
+  if (!io) {
+    console.warn("restoreScheduledDeliveries: socket not ready — skipping");
+    return;
+  }
+  try {
+    const pending = await Campaign.find({
+      action:          "approve",
+      status:          { $ne: "cancel" },
+      scheduleAt:      { $gt: new Date() },
+      acknowledgement: { $exists: false },
+    }).populate("createdBy", CREATOR_FIELDS);
+
+    for (const campaign of pending) {
+      const delay = new Date(campaign.scheduleAt).getTime() - Date.now();
+      if (delay <= 0) continue;
+
+      const payload = buildPayload(campaign, {});
+      scheduleDelivery(campaign._id.toString(), delay, () => {
+        console.log(`📤 [restored] Delivering scheduled campaign ${campaign._id} to IT`);
+        io.to("room:it").emit("campaign:it_queued", payload);
+      });
+    }
+
+    console.log(`♻️  Restored ${pending.length} scheduled delivery timer(s)`);
+  } catch (err) {
+    console.error("Failed to restore scheduled deliveries:", err);
+  }
 };
 
 export const getIO = () => {

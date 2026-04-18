@@ -8,24 +8,24 @@ import {
   emitITQueued,
   emitITAck,
 } from "../socket/socket.js";
+import { cancelDelivery } from "../socket/campaignScheduler.js";
 
-// ── managerId is included so socket.js can identify the owner's manager
-//    and route PM / IT events to the correct personal room.
+// managerId is populated so socket.js can route PM / IT events to the
+// correct personal room via getOwnerInfo().
 const CREATOR_FIELDS = "username email role _id managerId";
 
 /**
- * Helper: fetch a campaign by id with createdBy populated.
- * Used after every create / findByIdAndUpdate so socket payloads
- * and API responses always carry { _id, username, email, role, managerId }
- * instead of a raw ObjectId.
+ * Fetch a campaign by id with createdBy populated.
+ * Used after every create / findByIdAndUpdate so socket payloads and API
+ * responses always carry { _id, username, email, role, managerId }.
  */
 const findPopulated = (id) =>
   Campaign.findById(id).populate("createdBy", CREATOR_FIELDS);
 
 // ── Create Campaign ────────────────────────────────────────────────────────────
 export const createCampaignService = async (user, message, requestedAt, teamId) => {
-  if (!message)  throw new AppError("Message is required", 400);
-  if (!teamId)   throw new AppError("Team is required", 400);
+  if (!message) throw new AppError("Message is required", 400);
+  if (!teamId)  throw new AppError("Team is required", 400);
   if (!["ppc", "manager"].includes(user.role)) {
     throw new AppError("Not authorized", 403);
   }
@@ -44,9 +44,7 @@ export const createCampaignService = async (user, message, requestedAt, teamId) 
     teamId:      team._id,
   });
 
-  // Populate before emitting so the socket payload has createdBy.username + managerId
   const campaign = await findPopulated(raw._id);
-  // performer (user) carries managerId from authMiddleware for PPC routing
   emitCampaignCreated(campaign, user);
   return campaign;
 };
@@ -74,8 +72,6 @@ export const getCampaignService = async (user) => {
   }
 
   if (user.role === "it") {
-    // Only approved campaigns whose scheduleAt has arrived (or has no scheduleAt),
-    // and not cancelled by PPC/Manager after PM approved.
     const approved = await Campaign.find({
       action: "approve",
       status: { $ne: "cancel" },
@@ -117,7 +113,6 @@ export const updateCampaignService = async (
       { returnDocument: "after" },
     );
     const campaign = await findPopulated(raw._id);
-    // performer (user) carries managerId for PPC routing in socket.js
     emitCampaignUpdated(campaign, user);
     return campaign;
   }
@@ -132,12 +127,13 @@ export const updateCampaignService = async (
       { $set: { pmMessage, action, scheduleAt } },
       { returnDocument: "after" },
     );
-    // createdBy is populated with managerId so socket can route to owner's manager
     const campaign = await findPopulated(raw._id);
 
     if (action === "approve") {
       emitITQueued(campaign, user);
     } else {
+      // PM cancelled — remove any pending scheduled delivery to IT
+      cancelDelivery(campaignId);
       emitCampaignUpdated(campaign, user);
     }
     return campaign;
@@ -145,10 +141,28 @@ export const updateCampaignService = async (
 
   // ── IT ───────────────────────────────────────────────────────────────────────
   if (user.role === "it") {
+    /**
+     * FIX – Issue 2:
+     *   "not done" now also sets status → "cancel" and action → "cancel".
+     *   This makes the campaign uneditable everywhere (PPC/Manager UPDATE
+     *   button disappears, PM table marks it as CLOSED) and removes it from
+     *   the IT queue (itCampaigns filter: action !== "approve" → false).
+     *
+     *   cancelDelivery is called as a safety measure in case the timer fired
+     *   but the campaign was already being processed.
+     */
     if (acknowledgement === "not done") {
+      cancelDelivery(campaignId);
       const raw = await Campaign.findByIdAndUpdate(
         campaignId,
-        { $set: { acknowledgement, itMessage } },
+        {
+          $set: {
+            acknowledgement,
+            itMessage,
+            status: "cancel",
+            action: "cancel",
+          },
+        },
         { returnDocument: "after" },
       );
       const campaign = await findPopulated(raw._id);
@@ -156,6 +170,7 @@ export const updateCampaignService = async (
       return campaign;
     }
 
+    // "done"
     if (!itMessage) throw new AppError("Message not found", 400);
 
     const raw = await Campaign.findByIdAndUpdate(

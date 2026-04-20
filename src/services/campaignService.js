@@ -79,6 +79,8 @@ export const getCampaignService = async (user) => {
 
     const now = Date.now();
     return approved.filter((c) => {
+      // Exclude already acknowledged campaigns
+      if (c.acknowledgement) return false;
       if (!c.scheduleAt) return true;
       return new Date(c.scheduleAt).getTime() <= now;
     });
@@ -107,6 +109,24 @@ export const updateCampaignService = async (
 
   // ── PPC / Manager ────────────────────────────────────────────────────────────
   if (["ppc", "manager"].includes(user.role)) {
+    // Roll back: if the campaign was previously approved, cancel the scheduled
+    // IT delivery, clear PM notes/schedule time, and reset action to pending
+    // so the PM must re-approve before IT receives it.
+    if (oldCampaign.action === "approve") {
+      cancelDelivery(campaignId);
+      const raw = await Campaign.findByIdAndUpdate(
+        campaignId,
+        {
+          $set:   { message, status, requestedAt },
+          $unset: { pmMessage: "", action: "", scheduleAt: "" },
+        },
+        { returnDocument: "after" },
+      );
+      const campaign = await findPopulated(raw._id);
+      emitCampaignUpdated(campaign, user);
+      return campaign;
+    }
+
     const raw = await Campaign.findByIdAndUpdate(
       campaignId,
       { $set: { message, status, requestedAt } },
@@ -122,35 +142,37 @@ export const updateCampaignService = async (
     if (action !== "cancel" && !pmMessage)
       throw new AppError("Message required", 400);
 
+    // PM cancel: also set status → "cancel" so the campaign becomes uneditable
+    // everywhere and the ticket state shows CANCELLED.
+    if (action === "cancel") {
+      cancelDelivery(campaignId);
+      const raw = await Campaign.findByIdAndUpdate(
+        campaignId,
+        { $set: { pmMessage, action, status: "cancel" } },
+        { returnDocument: "after" },
+      );
+      const campaign = await findPopulated(raw._id);
+      emitCampaignUpdated(campaign, user);
+      return campaign;
+    }
+
+    // approve — schedule IT delivery
     const raw = await Campaign.findByIdAndUpdate(
       campaignId,
       { $set: { pmMessage, action, scheduleAt } },
       { returnDocument: "after" },
     );
     const campaign = await findPopulated(raw._id);
-
-    if (action === "approve") {
-      emitITQueued(campaign, user);
-    } else {
-      // PM cancelled — remove any pending scheduled delivery to IT
-      cancelDelivery(campaignId);
-      emitCampaignUpdated(campaign, user);
-    }
+    emitITQueued(campaign, user);
     return campaign;
   }
 
   // ── IT ───────────────────────────────────────────────────────────────────────
   if (user.role === "it") {
-    /**
-     * FIX – Issue 2:
-     *   "not done" now also sets status → "cancel" and action → "cancel".
-     *   This makes the campaign uneditable everywhere (PPC/Manager UPDATE
-     *   button disappears, PM table marks it as CLOSED) and removes it from
-     *   the IT queue (itCampaigns filter: action !== "approve" → false).
-     *
-     *   cancelDelivery is called as a safety measure in case the timer fired
-     *   but the campaign was already being processed.
-     */
+    // "not done": keep action as "approve" so PM ACTION shows APPROVED.
+    // Set status to "not done" so ticket state shows NOT DONE and is uneditable
+    // (status !== "transfer" → no UPDATE button anywhere).
+    // The campaign is removed from the IT queue by the acknowledgement filter.
     if (acknowledgement === "not done") {
       cancelDelivery(campaignId);
       const raw = await Campaign.findByIdAndUpdate(
@@ -159,8 +181,8 @@ export const updateCampaignService = async (
           $set: {
             acknowledgement,
             itMessage,
-            status: "cancel",
-            action: "cancel",
+            status: "not done",
+            // action intentionally kept as "approve" — visible in PM/PPC/Manager dashboards
           },
         },
         { returnDocument: "after" },

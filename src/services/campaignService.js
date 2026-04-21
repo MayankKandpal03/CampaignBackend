@@ -10,15 +10,8 @@ import {
 } from "../socket/socket.js";
 import { cancelDelivery } from "../socket/campaignScheduler.js";
 
-// managerId is populated so socket.js can route PM / IT events to the
-// correct personal room via getOwnerInfo().
 const CREATOR_FIELDS = "username email role _id managerId";
 
-/**
- * Fetch a campaign by id with createdBy populated.
- * Used after every create / findByIdAndUpdate so socket payloads and API
- * responses always carry { _id, username, email, role, managerId }.
- */
 const findPopulated = (id) =>
   Campaign.findById(id).populate("createdBy", CREATOR_FIELDS);
 
@@ -79,7 +72,6 @@ export const getCampaignService = async (user) => {
 
     const now = Date.now();
     return approved.filter((c) => {
-      // Exclude already acknowledged campaigns
       if (c.acknowledgement) return false;
       if (!c.scheduleAt) return true;
       return new Date(c.scheduleAt).getTime() <= now;
@@ -109,22 +101,11 @@ export const updateCampaignService = async (
 
   // ── PPC / Manager ────────────────────────────────────────────────────────────
   if (["ppc", "manager"].includes(user.role)) {
-    // Roll back: if the campaign was previously approved, cancel the scheduled
-    // IT delivery, clear PM notes/schedule time, and reset action to pending
-    // so the PM must re-approve before IT receives it.
+    // Once the PM has approved (sent to IT), the campaign is locked.
+    // PPC/Manager can no longer modify it regardless of whether schedule
+    // time has passed or not.
     if (oldCampaign.action === "approve") {
-      cancelDelivery(campaignId);
-      const raw = await Campaign.findByIdAndUpdate(
-        campaignId,
-        {
-          $set:   { message, status, requestedAt },
-          $unset: { pmMessage: "", action: "", scheduleAt: "" },
-        },
-        { returnDocument: "after" },
-      );
-      const campaign = await findPopulated(raw._id);
-      emitCampaignUpdated(campaign, user);
-      return campaign;
+      throw new AppError("Campaign has been sent to IT and can no longer be modified", 400);
     }
 
     const raw = await Campaign.findByIdAndUpdate(
@@ -142,8 +123,6 @@ export const updateCampaignService = async (
     if (action !== "cancel" && !pmMessage)
       throw new AppError("Message required", 400);
 
-    // PM cancel: also set status → "cancel" so the campaign becomes uneditable
-    // everywhere and the ticket state shows CANCELLED.
     if (action === "cancel") {
       cancelDelivery(campaignId);
       const raw = await Campaign.findByIdAndUpdate(
@@ -169,10 +148,7 @@ export const updateCampaignService = async (
 
   // ── IT ───────────────────────────────────────────────────────────────────────
   if (user.role === "it") {
-    // "not done": keep action as "approve" so PM ACTION shows APPROVED.
-    // Set status to "not done" so ticket state shows NOT DONE and is uneditable
-    // (status !== "transfer" → no UPDATE button anywhere).
-    // The campaign is removed from the IT queue by the acknowledgement filter.
+    // "not done": keep action as "approve", set status to "not done".
     if (acknowledgement === "not done") {
       cancelDelivery(campaignId);
       const raw = await Campaign.findByIdAndUpdate(
@@ -182,7 +158,7 @@ export const updateCampaignService = async (
             acknowledgement,
             itMessage,
             status: "not done",
-            // action intentionally kept as "approve" — visible in PM/PPC/Manager dashboards
+            // action intentionally kept as "approve"
           },
         },
         { returnDocument: "after" },

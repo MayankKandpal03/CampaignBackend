@@ -1,6 +1,6 @@
 // src/services/campaignService.js  (backend)
 import Campaign from "../models/campaignModel.js";
-import Team     from "../models/teamModel.js";
+import Team from "../models/teamModel.js";
 import { AppError } from "../utils/errorHandler.js";
 import {
   emitCampaignCreated,
@@ -18,7 +18,7 @@ const findPopulated = (id) =>
 // ── Create Campaign ────────────────────────────────────────────────────────────
 export const createCampaignService = async (user, message, requestedAt, teamId) => {
   if (!message) throw new AppError("Message is required", 400);
-  if (!teamId)  throw new AppError("Team is required", 400);
+  if (!teamId) throw new AppError("Team is required", 400);
   if (!["ppc", "manager"].includes(user.role)) {
     throw new AppError("Not authorized", 403);
   }
@@ -31,10 +31,14 @@ export const createCampaignService = async (user, message, requestedAt, teamId) 
   if (!team) throw new AppError("Not authorized for this team", 403);
 
   const raw = await Campaign.create({
-    createdBy:   user._id,
+    createdBy: user._id,
     message,
-    requestedAt,
-    teamId:      team._id,
+    // FIX: always store as UTC ISO string. requestedAt comes from the frontend
+    // already converted to UTC ISO (see formatters.localToUTC).
+    // Falls back to now() if not provided.
+    requestedAt: requestedAt || new Date().toISOString(),
+    teamId: team._id,
+    // scheduleAt intentionally NOT set here — must remain empty until PM approves
   });
 
   const campaign = await findPopulated(raw._id);
@@ -65,6 +69,15 @@ export const getCampaignService = async (user) => {
   }
 
   if (user.role === "it") {
+    /**
+     * FIX: IT only sees campaigns where:
+     *  - action === "approve"
+     *  - status is NOT "cancel"
+     *  - not already acknowledged
+     *  - scheduleAt is either not set (deliver immediately) OR has passed
+     *
+     * All scheduleAt values are UTC ISO strings so Date.now() comparison is correct.
+     */
     const approved = await Campaign.find({
       action: "approve",
       status: { $ne: "cancel" },
@@ -73,7 +86,7 @@ export const getCampaignService = async (user) => {
     const now = Date.now();
     return approved.filter((c) => {
       if (c.acknowledgement) return false;
-      if (!c.scheduleAt) return true;
+      if (!c.scheduleAt) return true; // no schedule → visible immediately
       return new Date(c.scheduleAt).getTime() <= now;
     });
   }
@@ -101,13 +114,66 @@ export const updateCampaignService = async (
 
   // ── PPC / Manager ────────────────────────────────────────────────────────────
   if (["ppc", "manager"].includes(user.role)) {
-    // Once the PM has approved (sent to IT), the campaign is locked.
-    // PPC/Manager can no longer modify it regardless of whether schedule
-    // time has passed or not.
     if (oldCampaign.action === "approve") {
-      throw new AppError("Campaign has been sent to IT and can no longer be modified", 400);
+      const now = Date.now();
+      const scheduleTime = oldCampaign.scheduleAt
+        ? new Date(oldCampaign.scheduleAt).getTime()
+        : 0;
+
+      /**
+       * FIX: If the schedule time has already passed, the campaign has been
+       * delivered to IT — lock it completely.
+       * If it has NOT passed yet, allow the edit/cancel but:
+       *   - Cancel the pending delivery timer
+       *   - Reset PM fields (scheduleAt, pmMessage, action) so PM must re-approve
+       */
+      const schedulePassed = !oldCampaign.scheduleAt || scheduleTime <= now;
+
+      if (schedulePassed) {
+        throw new AppError(
+          "Campaign has been sent to IT and can no longer be modified",
+          400,
+        );
+      }
+
+      // Cancel the scheduled IT delivery before making changes
+      cancelDelivery(campaignId);
+
+      if (status === "cancel") {
+        // PPC/Manager is cancelling before the schedule fires — allow it
+        const raw = await Campaign.findByIdAndUpdate(
+          campaignId,
+          { $set: { status: "cancel" }, $unset: { action: 1, scheduleAt: 1 } },
+          { returnDocument: "after" },
+        );
+        const campaign = await findPopulated(raw._id);
+        emitCampaignUpdated(campaign, user);
+        return campaign;
+      }
+
+      /**
+       * PPC/Manager is editing before schedule time:
+       * Reset PM fields so the PM must review and re-approve.
+       * $unset removes scheduleAt, pmMessage, action entirely.
+       */
+      const raw = await Campaign.findByIdAndUpdate(
+        campaignId,
+        {
+          $set: {
+            message: message || oldCampaign.message,
+            status: "transfer",
+            requestedAt: requestedAt || oldCampaign.requestedAt,
+          },
+          $unset: { scheduleAt: 1, pmMessage: 1, action: 1 },
+        },
+        { returnDocument: "after" },
+      );
+      const campaign = await findPopulated(raw._id);
+      emitCampaignUpdated(campaign, user);
+      return campaign;
     }
 
+    // Normal edit (not yet approved by PM)
     const raw = await Campaign.findByIdAndUpdate(
       campaignId,
       { $set: { message, status, requestedAt } },
@@ -135,10 +201,17 @@ export const updateCampaignService = async (
       return campaign;
     }
 
-    // approve — schedule IT delivery
+    /**
+     * PM approve — scheduleAt comes from the frontend already as a UTC ISO
+     * string (via new Date(localValue).toISOString()).
+     * Default to requestedAt if PM didn't change the schedule.
+     */
+    const resolvedScheduleAt =
+      scheduleAt || oldCampaign.requestedAt || new Date().toISOString();
+
     const raw = await Campaign.findByIdAndUpdate(
       campaignId,
-      { $set: { pmMessage, action, scheduleAt } },
+      { $set: { pmMessage, action, scheduleAt: resolvedScheduleAt } },
       { returnDocument: "after" },
     );
     const campaign = await findPopulated(raw._id);
@@ -148,7 +221,6 @@ export const updateCampaignService = async (
 
   // ── IT ───────────────────────────────────────────────────────────────────────
   if (user.role === "it") {
-    // "not done": keep action as "approve", set status to "not done".
     if (acknowledgement === "not done") {
       cancelDelivery(campaignId);
       const raw = await Campaign.findByIdAndUpdate(
@@ -158,7 +230,6 @@ export const updateCampaignService = async (
             acknowledgement,
             itMessage,
             status: "not done",
-            // action intentionally kept as "approve"
           },
         },
         { returnDocument: "after" },
@@ -168,7 +239,6 @@ export const updateCampaignService = async (
       return campaign;
     }
 
-    // "done"
     if (!itMessage) throw new AppError("Message not found", 400);
 
     const raw = await Campaign.findByIdAndUpdate(

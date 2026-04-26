@@ -139,16 +139,12 @@ export const emitITQueued = (campaign, performer = {}) => {
   const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
 
   const now = Date.now();
-  /**
-   * FIX: scheduleAt is now always a UTC ISO string from the frontend.
-   * new Date(isoString).getTime() is correct UTC epoch regardless of server TZ.
-   */
   const scheduleTime = campaign.scheduleAt
     ? new Date(campaign.scheduleAt).getTime()
     : 0;
   const isFuture = campaign.scheduleAt && scheduleTime > now;
 
-  // Always notify PMs + campaign owner immediately
+  // Always notify PMs + campaign owner immediately on approval
   const immediateRooms = ["room:all_pm"];
   if (ownerId) immediateRooms.push(`room:user_${ownerId}`);
   if (ownerRole === "ppc" && ownerManagerId)
@@ -162,9 +158,25 @@ export const emitITQueued = (campaign, performer = {}) => {
     );
     scheduleDelivery(campaign._id.toString(), delay, () => {
       console.log(`📤 Delivering scheduled campaign ${campaign._id} to IT`);
+
+      // Deliver to IT dashboard
       io.to("room:it").emit("campaign:it_queued", payload);
+
+      /**
+       * NEW: campaign:schedule_fired
+       * Notify the campaign owner (PPC/Manager) and all PMs that the timer has
+       * fired. Their dashboards listen to this event via useCampaigns and patch
+       * the store so the ticket state flips to "Sent to IT" and the edit button
+       * locks — all in real-time with zero polling.
+       */
+      const firedRooms = ["room:all_pm"];
+      if (ownerId) firedRooms.push(`room:user_${ownerId}`);
+      if (ownerRole === "ppc" && ownerManagerId)
+        firedRooms.push(`room:user_${ownerManagerId}`);
+      io.to(firedRooms).emit("campaign:schedule_fired", payload);
     });
   } else {
+    // Schedule time already passed — deliver immediately
     io.to("room:it").emit("campaign:it_queued", payload);
   }
 };
@@ -180,9 +192,8 @@ export const emitITAck = (campaign, performer = {}) => {
 };
 
 /**
- * FIX: scheduleAt is a String field in MongoDB.
- * Use $gt with an ISO string (not `new Date()`) for correct string comparison.
- * ISO 8601 strings sort chronologically so string comparison is safe.
+ * Restore pending campaign timers after server restart.
+ * Also re-emits campaign:schedule_fired to owner/PM when the timer fires.
  */
 export const restoreScheduledDeliveries = async () => {
   if (!io) {
@@ -195,19 +206,29 @@ export const restoreScheduledDeliveries = async () => {
     const pending = await Campaign.find({
       action: "approve",
       status: { $ne: "cancel" },
-      scheduleAt: { $gt: nowISO }, // string comparison — works for ISO format
+      scheduleAt: { $gt: nowISO },
       acknowledgement: { $exists: false },
     }).populate("createdBy", CREATOR_FIELDS);
 
     for (const campaign of pending) {
       const delay = new Date(campaign.scheduleAt).getTime() - Date.now();
       if (delay <= 0) continue;
+
       const payload = buildPayload(campaign, {});
+      const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
+
       scheduleDelivery(campaign._id.toString(), delay, () => {
         console.log(
           `📤 [restored] Delivering scheduled campaign ${campaign._id} to IT`,
         );
         io.to("room:it").emit("campaign:it_queued", payload);
+
+        // Notify owner/PM rooms that schedule fired
+        const firedRooms = ["room:all_pm"];
+        if (ownerId) firedRooms.push(`room:user_${ownerId}`);
+        if (ownerRole === "ppc" && ownerManagerId)
+          firedRooms.push(`room:user_${ownerManagerId}`);
+        io.to(firedRooms).emit("campaign:schedule_fired", payload);
       });
     }
     console.log(

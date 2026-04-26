@@ -11,7 +11,7 @@ const loginController = asyncWrap(async (req, res) => {
     .cookie("accessToken", accessToken, cookieOptions)
     .cookie("refreshToken", refreshToken, cookieOptions)
     .status(200)
-    .json({ success: true, user });
+    .json({ success: true, user, accessToken });
 });
 
 export default loginController;

@@ -122,8 +122,8 @@ export const acknowledgeTask = async (id, message, itUser) => {
   const doneAt = formatIST(now);
 
   const finalMessage = message
-    ? `${message}\n\nDone at ${doneAt}`
-    : `Done at ${doneAt}`;
+  ? `${message}\n\nat ${doneAt} by ${itUser.username}`
+  : `at ${doneAt} by ${itUser.username}`;
 
   task.itResponse.push({ message: finalMessage, acknowledgedAt: now });
   await task.save();

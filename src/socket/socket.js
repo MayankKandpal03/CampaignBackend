@@ -127,13 +127,6 @@ export const emitCampaignUpdated = (campaign, performer = {}) => {
   }
 };
 
-export const emitCampaignDeleted = (campaign, performer = {}) => {
-  io.to([`room:team_${campaign.teamId}`, "room:all_pm"]).emit(
-    "campaign:deleted",
-    { _id: campaign._id, performerName: performer.username || "unknown" },
-  );
-};
-
 export const emitITQueued = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
   const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
@@ -159,16 +152,8 @@ export const emitITQueued = (campaign, performer = {}) => {
     scheduleDelivery(campaign._id.toString(), delay, () => {
       console.log(`📤 Delivering scheduled campaign ${campaign._id} to IT`);
 
-      // Deliver to IT dashboard
       io.to("room:it").emit("campaign:it_queued", payload);
 
-      /**
-       * NEW: campaign:schedule_fired
-       * Notify the campaign owner (PPC/Manager) and all PMs that the timer has
-       * fired. Their dashboards listen to this event via useCampaigns and patch
-       * the store so the ticket state flips to "Sent to IT" and the edit button
-       * locks — all in real-time with zero polling.
-       */
       const firedRooms = ["room:all_pm"];
       if (ownerId) firedRooms.push(`room:user_${ownerId}`);
       if (ownerRole === "ppc" && ownerManagerId)
@@ -176,7 +161,6 @@ export const emitITQueued = (campaign, performer = {}) => {
       io.to(firedRooms).emit("campaign:schedule_fired", payload);
     });
   } else {
-    // Schedule time already passed — deliver immediately
     io.to("room:it").emit("campaign:it_queued", payload);
   }
 };
@@ -193,7 +177,6 @@ export const emitITAck = (campaign, performer = {}) => {
 
 /**
  * Restore pending campaign timers after server restart.
- * Also re-emits campaign:schedule_fired to owner/PM when the timer fires.
  */
 export const restoreScheduledDeliveries = async () => {
   if (!io) {
@@ -223,7 +206,6 @@ export const restoreScheduledDeliveries = async () => {
         );
         io.to("room:it").emit("campaign:it_queued", payload);
 
-        // Notify owner/PM rooms that schedule fired
         const firedRooms = ["room:all_pm"];
         if (ownerId) firedRooms.push(`room:user_${ownerId}`);
         if (ownerRole === "ppc" && ownerManagerId)
@@ -237,11 +219,6 @@ export const restoreScheduledDeliveries = async () => {
   } catch (err) {
     console.error("Failed to restore scheduled deliveries:", err);
   }
-};
-
-export const getIO = () => {
-  if (!io) throw new Error("Socket.io not initialized");
-  return io;
 };
 
 // ── Daily Task emitters ───────────────────────────────────────────────────────

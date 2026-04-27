@@ -10,13 +10,7 @@ import { asyncWrap } from "../utils/errorHandler.js";
 export const createUserController = asyncWrap(async (req, res) => {
   const creator = req.user;
   const { username, email, password, role, } = req.body;
-  await createUserService(
-    creator,
-    username,
-    email,
-    password,
-    role,
-  );
+  await createUserService(creator, username, email, password, role);
   return res
     .status(200)
     .json({ success: true, message: "User created successfully" });
@@ -26,11 +20,8 @@ export const createUserController = asyncWrap(async (req, res) => {
 export const deleteUserController = asyncWrap(async (req, res) => {
   const creator = req.user;
   const { id } = req.body;
+  // deleteUserService always throws on failure, never returns falsy
   const response = await deleteUserService(creator, id);
-  if (!response)
-    return res
-      .status(400)
-      .json({ success: false, message: "Not authorized to delete user" });
   return res.status(200).json({
     success: true,
     message: response.username + " deleted sucessfully",

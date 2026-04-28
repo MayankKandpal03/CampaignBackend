@@ -1,3 +1,4 @@
+//   See user model to understand syntax properly
 import mongoose from "mongoose";
 
 const teamSchema = new mongoose.Schema(

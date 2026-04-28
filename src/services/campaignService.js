@@ -108,9 +108,9 @@ export const updateCampaignService = async (
   },
 ) => {
   const oldCampaign = await Campaign.findById(campaignId);
-  if (!oldCampaign) throw new AppError("Campaign not found", 404);
+  if (!oldCampaign) throw new AppError("Task not found", 404);
   if (oldCampaign.status === "cancel")
-    throw new AppError("Campaign is already cancelled", 400);
+    throw new AppError("Task is already cancelled", 400);
 
   // ── PPC / Manager ────────────────────────────────────────────────────────────
   if (["ppc", "manager"].includes(user.role)) {
@@ -131,7 +131,7 @@ export const updateCampaignService = async (
 
       if (schedulePassed) {
         throw new AppError(
-          "Campaign has been sent to IT and can no longer be modified",
+          "Task has been sent to IT and can no longer be modified",
           400,
         );
       }

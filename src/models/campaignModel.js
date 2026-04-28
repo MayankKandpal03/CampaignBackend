@@ -1,8 +1,9 @@
-// ppc-> username message date-time (if null use created at) status
+//   See user model to understand syntax properly
 import mongoose from "mongoose";
 
 const campaignSchema = new mongoose.Schema(
   {
+    // PPC and Manager
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -15,10 +16,8 @@ const campaignSchema = new mongoose.Schema(
     },
     requestedAt: {
       type: String,
-      // Stores UTC ISO string — set by frontend or defaults to createdAt
-      default: () => new Date().toISOString(),
+      default: () => new Date().toISOString(), // Stores UTC ISO string — set by frontend or defaults to createdAt
     },
-    // PPC
     status: {
       type: String,
       enum: ["transfer", "cancel", "done", "not done"],
@@ -28,19 +27,12 @@ const campaignSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Team",
     },
+
     // Process manager
     action: {
       type: String,
       enum: ["approve", "cancel", "done"],
-      // NO default — must remain unset until PM acts
     },
-    /**
-     * FIX: scheduleAt MUST have no default.
-     * Previously `default: () => new Date()` caused every campaign to get
-     * a scheduleAt on creation, hiding it from IT immediately.
-     * Now it stays undefined until the PM explicitly sets it.
-     * Always stored as a UTC ISO string (e.g. "2024-01-15T09:00:00.000Z").
-     */
     scheduleAt: {
       type: String,
       default: undefined,
@@ -49,6 +41,7 @@ const campaignSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+
     // IT
     acknowledgement: {
       type: String,

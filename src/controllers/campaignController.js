@@ -14,7 +14,7 @@ export const createCampaignController = asyncWrap(async (req, res) => {
   res.status(200).json({
     success: true,
     data:result,
-    message: "Campaign Created successfully",
+    message: "Task Created successfully",
   });
 });
 
@@ -24,7 +24,7 @@ export const getCampaignController = asyncWrap(async (req, res) => {
   res.status(200).json({
     success: true,
     data,
-    message: "Campaign fetched successfully",
+    message: "Task fetched successfully",
   });
 });
 
@@ -54,6 +54,6 @@ export const updateCampaignController = asyncWrap(async (req, res) => {
   res.status(200).json({
     success: true,
     data,
-    message: "Campaign updated successfully",
+    message: "Task updated successfully",
   });
 });

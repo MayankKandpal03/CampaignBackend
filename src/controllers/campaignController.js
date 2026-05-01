@@ -3,6 +3,7 @@ import {
   createCampaignService,
   getCampaignService,
   updateCampaignService,
+  getITHistoryService,             // ← NEW
 } from "../services/campaignService.js";
 import { asyncWrap, AppError } from "../utils/errorHandler.js";
 
@@ -11,49 +12,30 @@ export const createCampaignController = asyncWrap(async (req, res) => {
   const { message, requestedAt, teamId } = req.body;
   if (!message || !teamId) throw new AppError("Missing fields", 400);
   const result = await createCampaignService(user, message, requestedAt, teamId);
-  res.status(200).json({
-    success: true,
-    data:result,
-    message: "Task Created successfully",
-  });
+  res.status(200).json({ success: true, data: result, message: "Task Created successfully" });
 });
 
 export const getCampaignController = asyncWrap(async (req, res) => {
   const user = req.user;
   const data = await getCampaignService(user);
-  res.status(200).json({
-    success: true,
-    data,
-    message: "Task fetched successfully",
-  });
+  res.status(200).json({ success: true, data, message: "Task fetched successfully" });
 });
 
 export const updateCampaignController = asyncWrap(async (req, res) => {
   const user = req.user;
   const {
-    campaignId,
-    message,
-    status,
-    requestedAt,
-    pmMessage,
-    action,
-    scheduleAt,
-    itMessage,
-    acknowledgement,
+    campaignId, message, status, requestedAt,
+    pmMessage, action, scheduleAt, itMessage, acknowledgement,
   } = req.body;
   const data = await updateCampaignService(user, campaignId, {
-    message,
-    status,
-    requestedAt,
-    pmMessage,
-    action,
-    scheduleAt,
-    itMessage,
-    acknowledgement,
+    message, status, requestedAt, pmMessage,
+    action, scheduleAt, itMessage, acknowledgement,
   });
-  res.status(200).json({
-    success: true,
-    data,
-    message: "Task updated successfully",
-  });
+  res.status(200).json({ success: true, data, message: "Task updated successfully" });
+});
+
+/** GET /api/v1/campaign/history — IT only */
+export const getITHistoryController = asyncWrap(async (req, res) => {
+  const data = await getITHistoryService();
+  res.status(200).json({ success: true, data, message: "History fetched successfully" });
 });

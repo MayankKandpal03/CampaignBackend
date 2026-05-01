@@ -258,3 +258,12 @@ export const updateCampaignService = async (
     return campaign;
   }
 };
+
+export const getITHistoryService = async () => {
+  return await Campaign.find({
+    action:          "approve",
+    acknowledgement: { $exists: true, $ne: null },
+  })
+    .select("pmMessage scheduleAt itMessage acknowledgement createdAt updatedAt")
+    .sort({ updatedAt: -1 });
+};

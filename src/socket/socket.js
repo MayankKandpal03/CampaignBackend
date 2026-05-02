@@ -1,23 +1,4 @@
 // src/socket/socket.js
-//
-// CHANGES:
-//  Added Web Push calls alongside every socket emit so that IT and PM users
-//  receive OS-level notifications even when the browser tab is in the
-//  background, minimised, or fully closed.
-//
-//  Push is sent via sendPushToRole() / sendPushToUsers() from pushService.js.
-//  If VAPID keys are not configured, sendPushToRole() is a no-op — safe to deploy.
-//
-//  Push targets per event:
-//    campaign:created         → process manager
-//    campaign:updated         → process manager
-//    campaign:it_queued       → process manager (approval notification)
-//    IT delivery (immediate)  → it
-//    IT delivery (scheduled)  → it  (fires from setTimeout)
-//    campaign:it_ack          → process manager
-//    dailytask:queued         → it  (fires from daily timer)
-//    dailytask:acked          → process manager
-
 import { Server }    from "socket.io";
 import jwt           from "jsonwebtoken";
 import User          from "../models/userModel.js";
@@ -61,7 +42,6 @@ const getOwnerInfo = (campaign) => {
 
 const CREATOR_FIELDS = "username email role _id managerId";
 
-// ── Truncate helper ───────────────────────────────────────────────────────────
 const trunc = (str = "", len = 100) =>
   str.length > len ? str.slice(0, len) + "…" : str;
 
@@ -131,7 +111,6 @@ export const emitCampaignCreated = (campaign, performer = {}) => {
     io.to("room:all_pm").emit("campaign:created", payload);
   }
 
-  // Push — notify PM regardless of creator role
   sendPushToRole("process manager", {
     title: "📋 New Campaign Created",
     body:  `${performer.username || "Someone"}: ${trunc(campaign.message)}`,
@@ -162,7 +141,6 @@ export const emitCampaignUpdated = (campaign, performer = {}) => {
     io.to(rooms).emit("campaign:updated", payload);
   }
 
-  // Push — notify PM when PPC/Manager edits or cancels
   if (["ppc", "manager"].includes(performer.role)) {
     const isCancelled =
       campaign.status === "cancel" || campaign.action === "cancel";
@@ -180,13 +158,12 @@ export const emitITQueued = (campaign, performer = {}) => {
   const payload = buildPayload(campaign, performer);
   const { ownerId, ownerRole, ownerManagerId } = getOwnerInfo(campaign);
 
-  const now         = Date.now();
+  const now          = Date.now();
   const scheduleTime = campaign.scheduleAt
     ? new Date(campaign.scheduleAt).getTime()
     : 0;
   const isFuture = campaign.scheduleAt && scheduleTime > now;
 
-  // Notify PMs + campaign owner immediately on approval
   const immediateRooms = ["room:all_pm"];
   if (ownerId) immediateRooms.push(`room:user_${ownerId}`);
   if (ownerRole === "ppc" && ownerManagerId)
@@ -194,7 +171,6 @@ export const emitITQueued = (campaign, performer = {}) => {
   io.to(immediateRooms).emit("campaign:it_queued", payload);
 
   if (isFuture) {
-    // ── Scheduled delivery ──────────────────────────────────────────────────
     const delay = scheduleTime - now;
     console.log(
       `⏰ Scheduling IT delivery for campaign ${campaign._id} in ${Math.round(delay / 1000)}s`
@@ -211,7 +187,6 @@ export const emitITQueued = (campaign, performer = {}) => {
         firedRooms.push(`room:user_${ownerManagerId}`);
       io.to(firedRooms).emit("campaign:schedule_fired", payload);
 
-      // Push IT when the scheduled time arrives
       sendPushToRole("it", {
         title: "📋 New Task Assigned",
         body:  trunc(campaign.pmMessage || campaign.message, 120),
@@ -222,10 +197,8 @@ export const emitITQueued = (campaign, performer = {}) => {
     });
 
   } else {
-    // ── Immediate delivery ──────────────────────────────────────────────────
     io.to("room:it").emit("campaign:it_queued", payload);
 
-    // Push IT immediately
     sendPushToRole("it", {
       title: "📋 New Task Assigned",
       body:  trunc(campaign.pmMessage || campaign.message, 120),
@@ -246,7 +219,6 @@ export const emitITAck = (campaign, performer = {}) => {
     rooms.push(`room:user_${ownerManagerId}`);
   io.to(rooms).emit("campaign:it_ack", payload);
 
-  // Push PM when IT responds
   const isDone = campaign.acknowledgement === "done";
   sendPushToRole("process manager", {
     title: isDone ? "✅ Task Completed" : "⚠️ Task Not Done",
@@ -293,7 +265,6 @@ export const restoreScheduledDeliveries = async () => {
           firedRooms.push(`room:user_${ownerManagerId}`);
         io.to(firedRooms).emit("campaign:schedule_fired", payload);
 
-        // Push IT on restored scheduled delivery
         sendPushToRole("it", {
           title: "📋 New Task Assigned",
           body:  trunc(campaign.pmMessage || campaign.message, 120),
@@ -315,12 +286,12 @@ export const restoreScheduledDeliveries = async () => {
 // ── Daily Task emitters ───────────────────────────────────────────────────────
 
 const buildTaskPayload = (task, performer = {}) => ({
-  _id:          task._id,
-  task:         task.task,
-  time:         task.time,
-  isSchedule:   task.isSchedule,
-  createdBy:    task.createdBy,
-  itResponse:   task.itResponse ?? [],
+  _id:           task._id,
+  task:          task.task,
+  time:          task.time,
+  isSchedule:    task.isSchedule,
+  createdBy:     task.createdBy,
+  itResponse:    task.itResponse ?? [],
   performerName: performer.username || "unknown",
   performerRole: performer.role    || "unknown",
 });
@@ -334,12 +305,11 @@ export const initDailyTaskDelivery = (task) => {
 
     io.to("room:it").emit("dailytask:queued", payload);
 
-    // Push IT every time the daily timer fires
     sendPushToRole("it", {
       title: "⏰ Daily Task Due Now",
       body:  trunc(task.task, 120),
       url:   "/it-dashboard",
-      tag:   `dailytask-${task._id}`,   // same tag each day = replaces yesterday's
+      tag:   `dailytask-${task._id}`,
       role:  "it",
     });
   });
@@ -349,12 +319,23 @@ export const cancelDailyTaskDelivery = (taskId) => {
   cancelDailyTimer(taskId);
 };
 
+/**
+ * FIX: emit dailytask:acked to BOTH room:all_pm AND room:it so every
+ * connected IT user instantly removes the acknowledged task from their queue.
+ * Previously only room:all_pm received this event, so other IT dashboards
+ * kept showing the task as pending until a manual refresh.
+ */
 export const emitDailyTaskAck = (task, performer = {}) => {
   if (!io) return;
 
-  io.to("room:all_pm").emit("dailytask:acked", buildTaskPayload(task, performer));
+  const payload = buildTaskPayload(task, performer);
 
-  // Push PM when IT acknowledges a daily task
+  // PM dashboards — for the acknowledgement log
+  io.to("room:all_pm").emit("dailytask:acked", payload);
+
+  // IT room — so every other IT user's dashboard removes the task immediately
+  io.to("room:it").emit("dailytask:acked", payload);
+
   sendPushToRole("process manager", {
     title: "✅ Daily Task Acknowledged",
     body:  `${performer.username || "IT"} completed: ${trunc(task.task, 100)}`,

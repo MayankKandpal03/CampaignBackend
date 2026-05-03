@@ -47,13 +47,18 @@ const trunc = (str = "", len = 100) =>
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 export const initSocket = (httpServer) => {
+  const DEFAULT_ORIGINS = [
+    "http://localhost:5173",
+    "https://satkartarcampaign.vercel.app",
+    "https://campaign-frontend-swart.vercel.app",
+  ];
+
   const configuredOrigins = process.env.CLIENT_URL?.split(",")
     .map((o) => o.trim())
-    .filter(Boolean);
+    .filter(Boolean) ?? [];
 
-  const allowedOrigins = configuredOrigins?.length
-    ? configuredOrigins
-    : ["http://localhost:5173", "https://campaign-frontend-swart.vercel.app"];
+  // Always include defaults — a misconfigured CLIENT_URL won't lock out known origins
+  const allowedOrigins = [...new Set([...DEFAULT_ORIGINS, ...configuredOrigins])];
 
   io = new Server(httpServer, {
     cors: { origin: allowedOrigins, credentials: true },
@@ -319,12 +324,6 @@ export const cancelDailyTaskDelivery = (taskId) => {
   cancelDailyTimer(taskId);
 };
 
-/**
- * FIX: emit dailytask:acked to BOTH room:all_pm AND room:it so every
- * connected IT user instantly removes the acknowledged task from their queue.
- * Previously only room:all_pm received this event, so other IT dashboards
- * kept showing the task as pending until a manual refresh.
- */
 export const emitDailyTaskAck = (task, performer = {}) => {
   if (!io) return;
 

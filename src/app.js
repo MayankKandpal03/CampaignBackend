@@ -7,16 +7,18 @@ dotenv.config();
 
 const app = express();
 
+const DEFAULT_ORIGINS = [
+  "http://localhost:5173",
+  "https://satkartarcampaign.vercel.app",
+];
+
 const configuredOrigins = process.env.CLIENT_URL?.split(",")
   .map((origin) => origin.trim())
-  .filter(Boolean);
+  .filter(Boolean) ?? [];
 
-const allowedOrigins = configuredOrigins?.length
-  ? configuredOrigins
-  : [
-      "http://localhost:5173",
-      "https://satkartarcampaign.vercel.app",
-    ];
+// Always include defaults — a misconfigured CLIENT_URL won't lock out known origins
+const allowedOrigins = [...new Set([...DEFAULT_ORIGINS, ...configuredOrigins])];
+
 app.use(
   cors({
     origin(origin, callback) {
@@ -42,7 +44,7 @@ import campaignRouter from "./routes/campaignRoute.js";
 import teamRouter from "./routes/teamRoute.js";
 import taskRouter from "./routes/dailyTaskRoute.js";
 import pushRouter from "./routes/pushRoute.js";
-import savedMessageRouter from "./routes/savedMessageRoute.js"; // ← NEW
+import savedMessageRouter from "./routes/savedMessageRoute.js";
 
 app.use("/api/v1", loginRouter);
 app.use("/api/v1", logoutRouter);
@@ -51,7 +53,7 @@ app.use("/api/v1/campaign", campaignRouter);
 app.use("/api/v1/team", teamRouter);
 app.use("/api/v1/task", taskRouter);
 app.use("/api/v1/push", pushRouter);
-app.use("/api/v1/saved-messages", savedMessageRouter); // ← NEW
+app.use("/api/v1/saved-messages", savedMessageRouter);
 
 app.use((err, req, res, next) => {
   res

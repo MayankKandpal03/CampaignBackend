@@ -259,9 +259,14 @@ export const updateCampaignService = async (
   }
 };
 
+// ── IT History ─────────────────────────────────────────────────────────────────
 export const getITHistoryService = async () => {
+  // FIX: When IT marks a campaign "done", the backend sets action:"done"
+  // (changing it from "approve"). The previous query filtered action:"approve"
+  // which meant only "not done" acknowledgements appeared (those keep action:"approve").
+  // Now we include both action values so "done" acks show up too.
   return await Campaign.find({
-    action:          "approve",
+    action:          { $in: ["approve", "done"] },
     acknowledgement: { $exists: true, $ne: null },
   })
     .select("pmMessage scheduleAt itMessage acknowledgement createdAt updatedAt")
